@@ -1,0 +1,82 @@
+Sou aluno de Programação Informática numa escola secundária em Portugal e preciso de correções ao meu teste de avaliação feito em Python cujo enunciado é o seguinte:
+
+A empresa de logística EcoEntrega pretende modernizar o seu sistema de gestão de frota. A empresa utiliza diferentes tipos de veículos para as suas entregas, divididos em três categorias: Camião, CarrinhaEletrica e Motociclo.
+
+De cada Veículo sabemos: Matrícula, marca e custo de manutenção base.
+
+Regras específicas por categoria:
+
+Camião:
+•	Possui a capacidade de carga em toneladas.
+•	Possui o número de eixos.
+•	Tem um acréscimo no custo de manutenção de 100€ por cada eixo.
+
+CarrinhaEletrica:
+•	Possui a capacidade da bateria (kWh).
+•	Possui a autonomia máxima.
+•	Tem um incentivo fiscal (desconto) de 150€ no custo de manutenção base.
+
+Motociclo:
+•	Possui a cilindrada (cc).
+•	Tem uma taxa de desgaste de pneus (acréscimo) fixa de 50€.
+
+Funcionalidades para todos os veículos:
+- Calcular o Custo de Manutenção Total (Base + Ajustes específicos).
+- Calcular o Custo de Manutenção com IVA (aplicar uma taxa de 23% sobre o custo total).
+- Indicar se um veículo tem um custo de manutenção base superior a outro.
+
+Gestão de Encomendas e Rotas:
+•	Motorista: Nome, número de carta de condução e data da carta de condução. Deve permitir calcular há quantos anos o motorista conduz (considerando a data atual).
+•	Entrega: Código da entrega, data, motorista responsável, veículo atribuído e distância (km). 
+Deve ser possível alterar a distância e alterar o motorista da entrega.
+
+
+
+Por fim, a empresa mantém um registo geral contendo:
+•	Mantém listas de: veículos, motoristas e entregas realizadas.
+Deve permitir: 
+- adicionar veículos
+- remover veículos
+- adicionar motoristas
+- remover motoristas
+- registar entregas
+- listar todas as entregas
+
+2.	Construa o respetivo código em Python para as classes do problema anterior adicionando o método __str__() para todas as classes.
+
+
+3.	Faça o programa principal (main) que que realize as seguintes operações:
+
+a) Criar e adicionar estes veículos à empresa:
+Tipo de Veículo	Matrícula	Marca	Custo de manutenção	Extras
+Camião	44-XX-00	Volvo	1200€	Capacidade de carga: 18 toneladas
+
+4 Eixos
+Carrinha	EL-22-AA	Tesla	500€	Capacidade da bateria: 100kWh
+
+400km autonomia
+Motociclo	MM-11-22	Honda	200€	Cilindrada: 500cc
+
+b) Criar e adicionar dois motoristas:
+•	Ricardo Santos: Carta: C-9988 - 19/02/2018
+•	Beatriz Costa: Carta: B-1122 - 02/03/2022
+
+c) Registar duas entregas:
+•	E01: 20/01/2026, Ricardo, Camião Volvo, 150km.
+•	E02: 21/02/2026, Beatriz, Carrinha Tesla, 45km.
+
+d) Apresente a listagem detalhada de todas as entregas.
+
+e) Utilizando o método apropriado deve indicar qual o veículo (camião ou carrinha) que tem o custo de manutenção com IVA mais elevado.
+
+f) Mostre o custo de manutenção total (sem IVA) de todos os veículos da frota.
+
+g) Utilizando o método apropriado deve indicar há quantos anos
+o motorista conduz.
+
+
+
+O meu código é o seguinte, por isso deteta os erros (ignorando indentação e imports) e dá sugestões de correção de forma tutorial (como se fosse um professor a ensinar-me):
+
+
+

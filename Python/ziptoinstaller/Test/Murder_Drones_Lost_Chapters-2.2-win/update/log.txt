@@ -1,0 +1,23 @@
+Verifying with ECDSA.
+Traceback (most recent call last):
+  File "lib/python3.12/ecdsa/keys.py", line 735, in verify_digest
+  File "lib/python3.12/ecdsa/util.py", line 426, in sigdecode_string
+ecdsa.util.MalformedSignature: Invalid length of signature, expected 64 bytes long, provided string is 14 bytes long
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "renpy/common/00updater.rpy", line 930, in check_updates
+    if verifying_key.verify(signature, updates_json):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "lib/python3.12/ecdsa/keys.py", line 685, in verify
+  File "lib/python3.12/ecdsa/keys.py", line 737, in verify_digest
+ecdsa.keys.BadSignatureError: ('Malformed formatting of signature', MalformedSignature('Invalid length of signature, expected 64 bytes long, provided string is 14 bytes long'))
+Traceback (most recent call last):
+  File "renpy/common/00updater.rpy", line 314, in run
+    self.update()
+  File "renpy/common/00updater.rpy", line 359, in update
+    self.check_updates()
+  File "renpy/common/00updater.rpy", line 966, in check_updates
+    raise UpdateError(_("Could not verify update signature."))
+store.updater.UpdateError: Could not verify update signature.

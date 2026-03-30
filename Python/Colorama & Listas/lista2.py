@@ -1,0 +1,5 @@
+meses = ("Janeiro", "Fevereiro", "Março")
+meses = list(meses)
+meses.append("Abril")
+meses = tuple(meses)
+print(meses)

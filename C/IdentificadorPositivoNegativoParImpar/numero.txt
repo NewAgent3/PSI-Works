@@ -1,0 +1,3 @@
+5 - Impar e positivo
+-6 - Par e negativo
+9 - Impar e positivo

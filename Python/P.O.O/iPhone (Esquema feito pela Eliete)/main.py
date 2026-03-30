@@ -1,0 +1,21 @@
+import iphone as pe
+import random as rd
+import os
+os.system("cls")
+tele1 = pe.Iphone(45373018, "14 Pro")
+tele1.testa_unidade()
+tele2 = pe.Iphone(68825525, "SE 3rd Gen")
+tele2.testa_unidade()
+tele3 = pe.Iphone(94023542, "3G")
+tele3.testa_unidade()
+tele1.alterar_peso(round(rd.uniform(100, 200), 1))
+tele2.alterar_peso(round(rd.uniform(100, 200), 1))
+tele3.alterar_peso(round(rd.uniform(100, 200), 1))
+tele1.mudar_cor("Azul")
+tele2.mudar_cor("Verde")
+tele3.mudar_cor(input(f"Nova cor para o iPhone {tele1.modelo}: ").capitalize())
+tele1.ligar()
+tele3.ligar()
+print(tele1, "\n", "="*20)
+print(tele2, "\n", "="*20)
+print(tele3, "\n", "="*20)

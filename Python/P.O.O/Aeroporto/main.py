@@ -1,0 +1,27 @@
+from voo import Voo
+from piloto import Piloto
+from aviao import Aviao
+import datetime as dt
+data_tempo = dt.datetime.now()
+aviao1 = Aviao("CS-TVP", "Amália", 222, 900)
+aviao2 = Aviao("CS-TXF", "Eusébio", 165, 7400)
+piloto1 = Piloto("José Gonçalves", "PT.FCL.12345.A", 1967)
+piloto2 = Piloto("Elsa Brito", "PT.FCL.98765.H", 1991)
+piloto3 = Piloto("João Nunes", "PT.FCL.24680.A", 1985)
+voo1 = Voo(data_tempo.date(), "Lisboa", "Brasil")
+voo1.adicionar_piloto(piloto1)
+voo1.adicionar_piloto(piloto3)
+voo1.atribuir_aviao(aviao2)
+print(piloto1)
+print("="*10)
+print(piloto2)
+print("="*10)
+print(piloto3)
+print("="*10)
+aviao2.mudar_lugares(190)
+print(aviao1)
+print("="*10)
+print(aviao2)
+print("="*10)
+print(voo1)
+print("="*10)

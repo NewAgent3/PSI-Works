@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="pt" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulação de Buraco Negro</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      box-sizing: border-box;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    .solar-system {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    
+    .sun {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 80px;
+      height: 80px;
+      background: radial-gradient(circle, #fff7e0 0%, #ffcc00 30%, #ff9500 60%, #ff6600 100%);
+      border-radius: 50%;
+      box-shadow: 0 0 60px #ff9500, 0 0 100px #ff6600, 0 0 150px #ff4500;
+      animation: pulse-sun 2s ease-in-out infinite;
+      z-index: 10;
+      transition: all 2s ease-in-out;
+    }
+    
+    .sun.collapsing {
+      animation: collapse-sun 3s ease-in forwards;
+    }
+    
+    .black-hole {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 0;
+      height: 0;
+      background: radial-gradient(circle, #000 0%, #000 40%, #1a0033 60%, #330066 80%, transparent 100%);
+      border-radius: 50%;
+      opacity: 0;
+      z-index: 15;
+      transition: all 0.5s ease-out;
+    }
+    
+    .black-hole.active {
+      width: 100px;
+      height: 100px;
+      opacity: 1;
+      box-shadow: 0 0 0 10px rgba(75, 0, 130, 0.3), 
+                  0 0 0 20px rgba(75, 0, 130, 0.2),
+                  0 0 0 30px rgba(75, 0, 130, 0.1),
+                  inset 0 0 50px #000;
+      animation: black-hole-pulse 1s ease-in-out infinite;
+    }
+    
+    .accretion-disk {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) rotateX(75deg);
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      background: conic-gradient(from 0deg, #ff6600, #ff9500, #ffcc00, #ff9500, #ff6600, #ff4500, #ff6600);
+      opacity: 0;
+      z-index: 14;
+      animation: rotate-disk 2s linear infinite;
+      filter: blur(3px);
+    }
+    
+    .accretion-disk.active {
+      opacity: 0.8;
+    }
+    
+    .accretion-disk::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 110px;
+      height: 110px;
+      background: #000;
+      border-radius: 50%;
+    }
+    
+    .orbit {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      border: 1px dashed rgba(255, 255, 255, 0.15);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      transition: all 2s ease-in-out;
+    }
+    
+    .orbit.collapsing {
+      transform: translate(-50%, -50%) scale(0);
+      opacity: 0;
+    }
+    
+    .planet {
+      position: absolute;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      transition: all 0.1s linear;
+      z-index: 5;
+    }
+    
+    .planet.absorbed {
+      animation: absorb 1.5s ease-in forwards;
+    }
+    
+    .planet-label {
+      position: absolute;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 10px;
+      font-family: 'Exo 2', sans-serif;
+      white-space: nowrap;
+      pointer-events: none;
+      transition: opacity 0.5s ease;
+    }
+    
+    .stars {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    
+    .star {
+      position: absolute;
+      background: white;
+      border-radius: 50%;
+      animation: twinkle 2s ease-in-out infinite;
+    }
+    
+    .star.stretched {
+      animation: stretch-star 2s ease-in forwards;
+    }
+    
+    @keyframes pulse-sun {
+      0%, 100% { box-shadow: 0 0 60px #ff9500, 0 0 100px #ff6600, 0 0 150px #ff4500; }
+      50% { box-shadow: 0 0 80px #ff9500, 0 0 120px #ff6600, 0 0 180px #ff4500; }
+    }
+    
+    @keyframes collapse-sun {
+      0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+      50% { transform: translate(-50%, -50%) scale(1.5); opacity: 1; box-shadow: 0 0 100px #fff, 0 0 200px #ff9500; }
+      100% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+    }
+    
+    @keyframes black-hole-pulse {
+      0%, 100% { box-shadow: 0 0 0 10px rgba(75, 0, 130, 0.3), 0 0 0 20px rgba(75, 0, 130, 0.2), 0 0 0 30px rgba(75, 0, 130, 0.1), inset 0 0 50px #000; }
+      50% { box-shadow: 0 0 0 15px rgba(75, 0, 130, 0.4), 0 0 0 25px rgba(75, 0, 130, 0.3), 0 0 0 35px rgba(75, 0, 130, 0.2), inset 0 0 60px #000; }
+    }
+    
+    @keyframes rotate-disk {
+      from { transform: translate(-50%, -50%) rotateX(75deg) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotateX(75deg) rotate(360deg); }
+    }
+    
+    @keyframes absorb {
+      0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+      50% { transform: translate(-50%, -50%) scale(0.5); }
+      100% { left: 50%; top: 50%; transform: translate(-50%, -50%) scale(0); opacity: 0; }
+    }
+    
+    @keyframes twinkle {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    
+    @keyframes stretch-star {
+      0% { transform: scale(1); }
+      100% { transform: scale(0) translateX(100px); opacity: 0; }
+    }
+    
+    .info-panel {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      padding: 15px 20px;
+      border-radius: 12px;
+      font-family: 'Exo 2', sans-serif;
+      z-index: 100;
+    }
+    
+    .gravitational-wave {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(138, 43, 226, 0.5);
+      border-radius: 50%;
+      opacity: 0;
+      pointer-events: none;
+    }
+    
+    .gravitational-wave.active {
+      animation: wave-expand 2s ease-out infinite;
+    }
+    
+    @keyframes wave-expand {
+      0% { width: 100px; height: 100px; opacity: 0.8; }
+      100% { width: 600px; height: 600px; opacity: 0; }
+    }
+  </style>
+</head>
+<body class="h-full overflow-hidden" style="background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3a 50%, #0a0a2a 100%); font-family: 'Orbitron', sans-serif;">
+  <div class="h-full w-full relative">
+    <!-- Header -->
+    <div class="absolute top-0 left-0 right-0 z-50 p-4 text-center">
+      <h1 id="main-title" class="text-2xl md:text-3xl font-bold tracking-wider" style="color: #a855f7; text-shadow: 0 0 20px rgba(168, 85, 247, 0.5);">🌌 Formação de Buraco Negro no Sistema Solar</h1>
+      <p class="text-gray-400 text-sm mt-2 font-light" style="font-family: 'Exo 2', sans-serif;">Simulação do colapso gravitacional e seus efeitos</p>
+    </div>
+    
+    <!-- Solar System Container -->
+    <div class="solar-system" id="solar-system">
+      <!-- Stars Background -->
+      <div class="stars" id="stars"></div>
+      
+      <!-- Gravitational Waves -->
+      <div class="gravitational-wave" id="wave1"></div>
+      <div class="gravitational-wave" id="wave2" style="animation-delay: 0.5s;"></div>
+      <div class="gravitational-wave" id="wave3" style="animation-delay: 1s;"></div>
+      
+      <!-- Orbits -->
+      <div class="orbit" id="orbit-mercury" style="width: 120px; height: 120px;"></div>
+      <div class="orbit" id="orbit-venus" style="width: 160px; height: 160px;"></div>
+      <div class="orbit" id="orbit-earth" style="width: 210px; height: 210px;"></div>
+      <div class="orbit" id="orbit-mars" style="width: 270px; height: 270px;"></div>
+      <div class="orbit" id="orbit-jupiter" style="width: 360px; height: 360px;"></div>
+      <div class="orbit" id="orbit-saturn" style="width: 450px; height: 450px;"></div>
+      <div class="orbit" id="orbit-uranus" style="width: 530px; height: 530px;"></div>
+      <div class="orbit" id="orbit-neptune" style="width: 600px; height: 600px;"></div>
+      
+      <!-- Sun -->
+      <div class="sun" id="sun"></div>
+      
+      <!-- Black Hole (hidden initially) -->
+      <div class="black-hole" id="black-hole"></div>
+      
+      <!-- Accretion Disk -->
+      <div class="accretion-disk" id="accretion-disk"></div>
+      
+      <!-- Planets -->
+      <div class="planet" id="mercury" style="width: 10px; height: 10px; background: linear-gradient(135deg, #b5b5b5, #8a8a8a);">
+        <span class="planet-label" style="left: 15px; top: -5px;">Mercúrio</span>
+      </div>
+      <div class="planet" id="venus" style="width: 14px; height: 14px; background: linear-gradient(135deg, #ffd699, #cc9933);">
+        <span class="planet-label" style="left: 18px; top: -5px;">Vénus</span>
+      </div>
+      <div class="planet" id="earth" style="width: 15px; height: 15px; background: linear-gradient(135deg, #6b93d6, #4f7942);">
+        <span class="planet-label" style="left: 20px; top: -5px;">Terra 🌍</span>
+      </div>
+      <div class="planet" id="mars" style="width: 12px; height: 12px; background: linear-gradient(135deg, #e27b58, #c1440e);">
+        <span class="planet-label" style="left: 16px; top: -5px;">Marte</span>
+      </div>
+      <div class="planet" id="jupiter" style="width: 35px; height: 35px; background: linear-gradient(135deg, #d4a574, #c88b3a, #b87333); box-shadow: inset -5px 0 10px rgba(0,0,0,0.3);">
+        <span class="planet-label" style="left: 40px; top: 5px;">Júpiter</span>
+      </div>
+      <div class="planet" id="saturn" style="width: 30px; height: 30px; background: linear-gradient(135deg, #f4d59e, #c9a227);">
+        <span class="planet-label" style="left: 45px; top: 5px;">Saturno</span>
+        <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotateX(75deg); width: 50px; height: 50px; border: 3px solid rgba(210, 180, 140, 0.6); border-radius: 50%; pointer-events: none;"></div>
+      </div>
+      <div class="planet" id="uranus" style="width: 20px; height: 20px; background: linear-gradient(135deg, #b5e3e3, #7ec8e3);">
+        <span class="planet-label" style="left: 25px; top: 0;">Úrano</span>
+      </div>
+      <div class="planet" id="neptune" style="width: 19px; height: 19px; background: linear-gradient(135deg, #4b70dd, #3b5998);">
+        <span class="planet-label" style="left: 24px; top: 0;">Neptuno</span>
+      </div>
+    </div>
+    
+    <!-- Info Panel -->
+    <div class="info-panel" id="info-panel" style="background: rgba(10, 10, 30, 0.9); border: 1px solid rgba(168, 85, 247, 0.3);">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <p id="status-text" class="text-sm md:text-base" style="color: #e2e8f0; font-family: 'Exo 2', sans-serif;">
+            <span class="font-semibold" style="color: #a855f7;">Estado:</span> 
+            <span id="phase-text">Sistema Solar estável - O Sol brilha normalmente</span>
+          </p>
+        </div>
+        <div class="flex gap-3">
+          <button id="start-btn" onclick="startCollapse()" class="px-5 py-2 rounded-lg font-semibold text-sm transition-all duration-300 hover:scale-105" style="background: linear-gradient(135deg, #7c3aed, #a855f7); color: white; box-shadow: 0 0 20px rgba(168, 85, 247, 0.4);">
+            🚀 Iniciar Colapso
+          </button>
+          <button id="reset-btn" onclick="resetSimulation()" class="px-5 py-2 rounded-lg font-semibold text-sm transition-all duration-300 hover:scale-105" style="background: rgba(255, 255, 255, 0.1); color: #e2e8f0; border: 1px solid rgba(255, 255, 255, 0.2);">
+            🔄 Reiniciar
+          </button>
+        </div>
+      </div>
+      
+      <!-- Phase Indicator -->
+      <div class="mt-3 flex items-center gap-2">
+        <div class="flex gap-1">
+          <div id="phase-1" class="w-3 h-3 rounded-full transition-all duration-300" style="background: #a855f7;"></div>
+          <div id="phase-2" class="w-3 h-3 rounded-full transition-all duration-300" style="background: rgba(168, 85, 247, 0.3);"></div>
+          <div id="phase-3" class="w-3 h-3 rounded-full transition-all duration-300" style="background: rgba(168, 85, 247, 0.3);"></div>
+          <div id="phase-4" class="w-3 h-3 rounded-full transition-all duration-300" style="background: rgba(168, 85, 247, 0.3);"></div>
+        </div>
+        <span id="phase-label" class="text-xs" style="color: #94a3b8; font-family: 'Exo 2', sans-serif;">Fase 1: Estabilidade</span>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    const defaultConfig = {
+      title_text: '🌌 Formação de Buraco Negro no Sistema Solar',
+      start_button_text: '🚀 Iniciar Colapso',
+      reset_button_text: '🔄 Reiniciar',
+      primary_color: '#a855f7',
+      background_color: '#0a0a1a',
+      text_color: '#e2e8f0',
+      surface_color: 'rgba(10, 10, 30, 0.9)',
+      accent_color: '#7c3aed'
+    };
+    
+    // Planets configuration
+    const planets = [
+      { id: 'mercury', orbitRadius: 60, speed: 0.04, angle: Math.random() * Math.PI * 2 },
+      { id: 'venus', orbitRadius: 80, speed: 0.03, angle: Math.random() * Math.PI * 2 },
+      { id: 'earth', orbitRadius: 105, speed: 0.025, angle: Math.random() * Math.PI * 2 },
+      { id: 'mars', orbitRadius: 135, speed: 0.02, angle: Math.random() * Math.PI * 2 },
+      { id: 'jupiter', orbitRadius: 180, speed: 0.012, angle: Math.random() * Math.PI * 2 },
+      { id: 'saturn', orbitRadius: 225, speed: 0.009, angle: Math.random() * Math.PI * 2 },
+      { id: 'uranus', orbitRadius: 265, speed: 0.006, angle: Math.random() * Math.PI * 2 },
+      { id: 'neptune', orbitRadius: 300, speed: 0.004, angle: Math.random() * Math.PI * 2 }
+    ];
+    
+    let animationId;
+    let isCollapsing = false;
+    let blackHoleActive = false;
+    let centerX, centerY;
+    
+    // Create stars
+    function createStars() {
+      const starsContainer = document.getElementById('stars');
+      starsContainer.innerHTML = '';
+      for (let i = 0; i < 150; i++) {
+        const star = document.createElement('div');
+        star.className = 'star';
+        star.style.left = Math.random() * 100 + '%';
+        star.style.top = Math.random() * 100 + '%';
+        star.style.width = Math.random() * 2 + 1 + 'px';
+        star.style.height = star.style.width;
+        star.style.animationDelay = Math.random() * 2 + 's';
+        starsContainer.appendChild(star);
+      }
+    }
+    
+    // Update center position
+    function updateCenter() {
+      const container = document.getElementById('solar-system');
+      centerX = container.offsetWidth / 2;
+      centerY = container.offsetHeight / 2;
+    }
+    
+    // Animate planets
+    function animate() {
+      updateCenter();
+      
+      planets.forEach(planet => {
+        const el = document.getElementById(planet.id);
+        if (el.classList.contains('absorbed')) return;
+        
+        planet.angle += planet.speed;
+        
+        let radius = planet.orbitRadius;
+        
+        if (blackHoleActive) {
+          // Spiral inward effect
+          radius = Math.max(0, planet.orbitRadius - (planet.orbitRadius * 0.02));
+          planet.orbitRadius = radius;
+          planet.speed += 0.001; // Speed up as approaching
+          
+          if (radius < 50) {
+            el.classList.add('absorbed');
+          }
+        }
+        
+        const x = centerX + Math.cos(planet.angle) * radius;
+        const y = centerY + Math.sin(planet.angle) * radius;
+        
+        el.style.left = x + 'px';
+        el.style.top = y + 'px';
+      });
+      
+      animationId = requestAnimationFrame(animate);
+    }
+    
+    // Start collapse
+    function startCollapse() {
+      if (isCollapsing) return;
+      isCollapsing = true;
+      
+      const startBtn = document.getElementById('start-btn');
+      startBtn.disabled = true;
+      startBtn.style.opacity = '0.5';
+      
+      // Phase 2: Sun instability
+      updatePhase(2, 'Fase 2: Instabilidade Solar', 'O Sol está a colapsar sob a sua própria gravidade...');
+      
+      const sun = document.getElementById('sun');
+      sun.style.animation = 'pulse-sun 0.3s ease-in-out infinite';
+      
+      setTimeout(() => {
+        // Phase 3: Collapse
+        updatePhase(3, 'Fase 3: Colapso Gravitacional', 'Supernova! O núcleo colapsa formando um buraco negro...');
+        
+        sun.classList.add('collapsing');
+        
+        // Collapse orbits
+        document.querySelectorAll('.orbit').forEach((orbit, i) => {
+          setTimeout(() => orbit.classList.add('collapsing'), i * 200);
+        });
+        
+        setTimeout(() => {
+          // Phase 4: Black hole formation
+          updatePhase(4, 'Fase 4: Buraco Negro Formado', 'Singularidade criada! Os planetas estão a ser atraídos...');
+          
+          sun.style.display = 'none';
+          
+          const blackHole = document.getElementById('black-hole');
+          const accretionDisk = document.getElementById('accretion-disk');
+          
+          blackHole.classList.add('active');
+          accretionDisk.classList.add('active');
+          
+          // Activate gravitational waves
+          document.querySelectorAll('.gravitational-wave').forEach(wave => {
+            wave.classList.add('active');
+          });
+          
+          // Stretch stars effect
+          document.querySelectorAll('.star').forEach(star => {
+            setTimeout(() => star.classList.add('stretched'), Math.random() * 3000);
+          });
+          
+          blackHoleActive = true;
+          
+        }, 3000);
+        
+      }, 2000);
+    }
+    
+    // Update phase display
+    function updatePhase(phase, label, status) {
+      for (let i = 1; i <= 4; i++) {
+        const phaseEl = document.getElementById('phase-' + i);
+        const config = window.elementSdk?.config || defaultConfig;
+        if (i <= phase) {
+          phaseEl.style.background = config.primary_color || defaultConfig.primary_color;
+        } else {
+          phaseEl.style.background = 'rgba(168, 85, 247, 0.3)';
+        }
+      }
+      document.getElementById('phase-label').textContent = label;
+      document.getElementById('phase-text').textContent = status;
+    }
+    
+    // Reset simulation
+    function resetSimulation() {
+      cancelAnimationFrame(animationId);
+      isCollapsing = false;
+      blackHoleActive = false;
+      
+      // Reset planets
+      planets.forEach((planet, i) => {
+        const el = document.getElementById(planet.id);
+        el.classList.remove('absorbed');
+        el.style.opacity = '1';
+        planet.angle = Math.random() * Math.PI * 2;
+      });
+      
+      // Reset original orbit radii
+      planets[0].orbitRadius = 60;
+      planets[1].orbitRadius = 80;
+      planets[2].orbitRadius = 105;
+      planets[3].orbitRadius = 135;
+      planets[4].orbitRadius = 180;
+      planets[5].orbitRadius = 225;
+      planets[6].orbitRadius = 265;
+      planets[7].orbitRadius = 300;
+      
+      // Reset speeds
+      planets[0].speed = 0.04;
+      planets[1].speed = 0.03;
+      planets[2].speed = 0.025;
+      planets[3].speed = 0.02;
+      planets[4].speed = 0.012;
+      planets[5].speed = 0.009;
+      planets[6].speed = 0.006;
+      planets[7].speed = 0.004;
+      
+      // Reset orbits
+      document.querySelectorAll('.orbit').forEach(orbit => {
+        orbit.classList.remove('collapsing');
+      });
+      
+      // Reset sun
+      const sun = document.getElementById('sun');
+      sun.classList.remove('collapsing');
+      sun.style.display = 'block';
+      sun.style.animation = 'pulse-sun 2s ease-in-out infinite';
+      
+      // Reset black hole
+      const blackHole = document.getElementById('black-hole');
+      const accretionDisk = document.getElementById('accretion-disk');
+      blackHole.classList.remove('active');
+      accretionDisk.classList.remove('active');
+      
+      // Reset gravitational waves
+      document.querySelectorAll('.gravitational-wave').forEach(wave => {
+        wave.classList.remove('active');
+      });
+      
+      // Reset stars
+      createStars();
+      
+      // Reset button
+      const startBtn = document.getElementById('start-btn');
+      startBtn.disabled = false;
+      startBtn.style.opacity = '1';
+      
+      // Reset phase
+      updatePhase(1, 'Fase 1: Estabilidade', 'Sistema Solar estável - O Sol brilha normalmente');
+      
+      // Restart animation
+      animate();
+    }
+    
+    // Apply config to UI
+    async function onConfigChange(config) {
+      const title = document.getElementById('main-title');
+      const startBtn = document.getElementById('start-btn');
+      const resetBtn = document.getElementById('reset-btn');
+      const infoPanel = document.getElementById('info-panel');
+      
+      title.textContent = config.title_text || defaultConfig.title_text;
+      title.style.color = config.primary_color || defaultConfig.primary_color;
+      title.style.textShadow = `0 0 20px ${config.primary_color || defaultConfig.primary_color}50`;
+      
+      startBtn.textContent = config.start_button_text || defaultConfig.start_button_text;
+      startBtn.style.background = `linear-gradient(135deg, ${config.accent_color || defaultConfig.accent_color}, ${config.primary_color || defaultConfig.primary_color})`;
+      startBtn.style.boxShadow = `0 0 20px ${config.primary_color || defaultConfig.primary_color}66`;
+      
+      resetBtn.textContent = config.reset_button_text || defaultConfig.reset_button_text;
+      resetBtn.style.color = config.text_color || defaultConfig.text_color;
+      
+      infoPanel.style.background = config.surface_color || defaultConfig.surface_color;
+      infoPanel.style.borderColor = `${config.primary_color || defaultConfig.primary_color}4D`;
+      
+      document.body.style.background = `linear-gradient(135deg, ${config.background_color || defaultConfig.background_color} 0%, #1a1a3a 50%, #0a0a2a 100%)`;
+      
+      document.querySelectorAll('#info-panel p, #info-panel span').forEach(el => {
+        if (!el.classList.contains('font-semibold')) {
+          el.style.color = config.text_color || defaultConfig.text_color;
+        }
+      });
+      
+      document.querySelectorAll('.font-semibold').forEach(el => {
+        el.style.color = config.primary_color || defaultConfig.primary_color;
+      });
+    }
+    
+    // Map to capabilities
+    function mapToCapabilities(config) {
+      return {
+        recolorables: [
+          {
+            get: () => config.background_color || defaultConfig.background_color,
+            set: (value) => { config.background_color = value; window.elementSdk.setConfig({ background_color: value }); }
+          },
+          {
+            get: () => config.surface_color || defaultConfig.surface_color,
+            set: (value) => { config.surface_color = value; window.elementSdk.setConfig({ surface_color: value }); }
+          },
+          {
+            get: () => config.text_color || defaultConfig.text_color,
+            set: (value) => { config.text_color = value; window.elementSdk.setConfig({ text_color: value }); }
+          },
+          {
+            get: () => config.primary_color || defaultConfig.primary_color,
+            set: (value) => { config.primary_color = value; window.elementSdk.setConfig({ primary_color: value }); }
+          },
+          {
+            get: () => config.accent_color || defaultConfig.accent_color,
+            set: (value) => { config.accent_color = value; window.elementSdk.setConfig({ accent_color: value }); }
+          }
+        ],
+        borderables: [],
+        fontEditable: undefined,
+        fontSizeable: undefined
+      };
+    }
+    
+    // Map to edit panel values
+    function mapToEditPanelValues(config) {
+      return new Map([
+        ['title_text', config.title_text || defaultConfig.title_text],
+        ['start_button_text', config.start_button_text || defaultConfig.start_button_text],
+        ['reset_button_text', config.reset_button_text || defaultConfig.reset_button_text]
+      ]);
+    }
+    
+    // Initialize
+    function init() {
+      createStars();
+      updateCenter();
+      animate();
+      
+      window.addEventListener('resize', updateCenter);
+      
+      if (window.elementSdk) {
+        window.elementSdk.init({
+          defaultConfig,
+          onConfigChange,
+          mapToCapabilities,
+          mapToEditPanelValues
+        });
+      }
+    }
+    
+    init();
+  </script>
+</body>
+</html>

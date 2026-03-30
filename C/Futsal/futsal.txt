@@ -1,0 +1,10 @@
+1 - Bernardo Paçó	Garda-Redes	25
+2 - Cristiano Marques	Guarda-Redes	29
+3 - André Correia	Guarda-Redes	27
+4 - André Coelho	Fixo	31
+5 - Erick	Fixo	30
+6 - João Matos	Fixo	38
+7 - Afonso	Ala	27
+8 - Lúcio Rocha Ala	21
+9 - Bruno Coelho	Ala	38
+10 - Pauleta	Ala	31

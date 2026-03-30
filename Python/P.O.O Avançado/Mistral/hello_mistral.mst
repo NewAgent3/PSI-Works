@@ -1,0 +1,85 @@
+# ╔══════════════════════════════════════════╗
+# ║   hello_mistral.mst — example program   ║
+# ╚══════════════════════════════════════════╝
+
+# ── Classes ─────────────────────────────────
+class Animal:
+    fn __init__(self, name :: str, sound :: str):
+        self.name = name
+        self.sound = sound
+
+    fn speak(self) -> str:
+        return f"{self.name} says {self.sound}!"
+
+    fn __repr__(self) -> str:
+        return f"Animal({self.name!r})"
+
+
+class Dog(Animal):
+    fn __init__(self, name :: str):
+        super().__init__(name, "woof")
+
+    fn fetch(self, item :: str):
+        echo(f"{self.name} fetches the {item}!")
+
+
+# ── Functions ────────────────────────────────
+fn fibonacci(n :: int) -> int:
+    """Return the n-th Fibonacci number."""
+    when n <= 1:
+        return n
+    otherwise:
+        return fibonacci(n - 1) + fibonacci(n - 2)
+
+
+fn is_prime(n :: int) -> bool:
+    when n < 2:
+        return false
+    loop i in range(2, int(n ** 0.5) + 1):
+        when n % i == 0:
+            return false
+    return true
+
+
+# ── Main program ─────────────────────────────
+fn main():
+    echo("── Animal Demo ────────────────────────")
+    let dog = Dog("Rex")
+    echo(dog.speak())
+    dog.fetch("ball")
+
+    echo("")
+    echo("── Fibonacci sequence ─────────────────")
+    let fibs = [fibonacci(i) loop i in range(10)]
+    echo("First 10 Fibonacci:", fibs)
+
+    echo("")
+    echo("── Prime numbers up to 50 ─────────────")
+    let primes = [n loop n in range(2, 51) when is_prime(n)]
+    echo("Primes:", primes)
+
+    echo("")
+    echo("── String operations ──────────────────")
+    let words = ["Mistral", "is", "clean", "and", "fast"]
+    let sentence = " ".join(words)
+    echo(sentence.upper())
+
+    echo("")
+    echo("── Exception handling ─────────────────")
+    try:
+        let result = 10 / 0
+    catch ZeroDivisionError as e:
+        echo(f"Caught division error: {e}")
+    finally:
+        echo("Cleanup done.")
+
+    echo("")
+    echo("── Repeat (while) countdown ───────────")
+    let i = 5
+    repeat i > 0:
+        echo(f"  T-{i}...")
+        i -= 1
+    echo("  Liftoff! 🚀")
+
+
+main()

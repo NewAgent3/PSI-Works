@@ -1,0 +1,7 @@
+num1 = float(input("Domínio aplicacional: "))
+num2 = float(input("Domínio conceptual: "))
+num3 = float(input("Domínio atitudinal: "))
+print(f"|{'Domínio Aplicacional':<30}|{num1:<10}|")
+print(f"|{'Domínio Conceptual':^30}|{num2:^10}|")
+print(f"|{'Domínio Atitudinal':>30}|{num3:>10}|")
+print(f"|{'Média Final':^30}|{(num1 * 0.6) + (num2 * 0.3) + (num3 * 0.1):^10.2f}|")

@@ -1,0 +1,10 @@
+n1 = int(input())
+n2 = int(input())
+n3 = int(input())
+n4 = int(input())
+n5 = int(input())
+n6 = int(input())
+n7 = int(input())
+n8 = int(input())
+print(n1 * 2**7 + n2 * 2**6 + n3 * 2**5 + n4 * 2**4 +
+      n5 * 2**3 + n6 * 2**2 + n7 * 2**1 + n8 * 2**0)
