@@ -2,6 +2,7 @@ from classes import SistemaCRM, Encomenda, Item, Fornecedor, Produto
 import datetime as dt
 import tkinter as tk
 from tkinter import messagebox as mbx
+from tkinter import ttk
 from PIL import Image, ImageTk
 import os
 import playsound3 as ps3
@@ -50,6 +51,96 @@ def criar_fornecedor():
     avaliacao_cumprimento_prazos_entry.pack()
     tk.Button(criar_forn_window, text="Criar",
               command=lambda: verificar_adicionar_fornecedor(criar_forn_window, codigo_entry, nome_entry, contacto_entry, email_entry, avaliacao_qualidade_entry, avaliacao_cumprimento_prazos_entry)).pack(pady=5)
+
+
+def criar_produto():
+    criar_prod_window = tk.Toplevel(window)
+    criar_prod_window.geometry("500x500")
+    # CÓDIGO DO PRODUTO
+    tk.Label(criar_prod_window, text="Código",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    codigo_entry = tk.Entry(criar_prod_window)
+    codigo_entry.pack()
+    # NOME DO PRODUTO
+    tk.Label(criar_prod_window, text="Nome",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    nome_entry = tk.Entry(criar_prod_window)
+    nome_entry.pack()
+    # CATEGORIA DO PRODUTO
+    tk.Label(criar_prod_window, text="Categoria",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    categoria_entry = tk.Entry(criar_prod_window)
+    categoria_entry.pack()
+    # PREÇO DO PRODUTO
+    tk.Label(criar_prod_window, text="Preço",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    preco_entry = tk.Entry(criar_prod_window)
+    preco_entry.pack()
+    tk.Button(criar_prod_window, text="Criar",
+              command=lambda: verificar_adicionar_produto(criar_prod_window, codigo_entry, nome_entry, categoria_entry, preco_entry)).pack(pady=5)
+
+
+def criar_encomenda():
+    criar_enco_window = tk.Toplevel(window)
+    criar_enco_window.geometry("500x500")
+    # NÚMERO DA ENCOMENDA
+    tk.Label(criar_enco_window, text="Número",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    codigo_entry = tk.Entry(criar_enco_window)
+    codigo_entry.pack()
+    # DATA DA ENCOMENDA
+    tk.Label(criar_enco_window, text="Data (Dia/Mês/Ano)",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    data_entry = tk.Entry(criar_enco_window)
+    data_entry.pack()
+    # FORNECEDOR DA ENCOMENDA
+    # THE REAL DEAL!!! (Again...)
+    tk.Label(criar_enco_window, text="Fornecedor",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    fornecedor_entry = ttk.Combobox(
+        criar_enco_window, values=backend_system.lista_fornecedores)
+    fornecedor_entry.pack()
+    # THE REAL DEAL!!!
+    tk.Label(criar_enco_window, text="Produtos",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    produtos_entry = tk.Listbox(
+        criar_enco_window, values=backend_system.lista_produtos)
+    produtos_entry.pack()
+    tk.Button(criar_enco_window, text="Criar",
+              command=lambda: verificar_adicionar_produto(criar_enco_window, codigo_entry, data_entry, fornecedor_entry, produtos_entry)).pack(pady=5)
+
+
+def verificar_adicionar_produto(prod_window, codigo_entry, data_entry, fornecedor_entry, produtos_entry):
+    pass  # Will do at home, so in a bit XD
+
+
+def verificar_adicionar_produto(prod_window, codigo_entry, nome_entry, categoria_entry, preco_entry):
+    code = str(codigo_entry.get())
+    name = str(nome_entry.get())
+    category = str(categoria_entry.get())
+    if code == "":
+        mbx.showerror("ERRO!", "O código está vazio!")
+    elif name == "":
+        mbx.showerror("ERRO!", "O nome está vazio!")
+    elif category == "":
+        mbx.showerror("ERRO!", "A categoria está vazio!")
+    else:
+        try:
+            price = float(preco_entry.get())
+        except ValueError:
+            mbx.showerror(
+                "ERRO!", "O preço apenas pode conter números!")
+        else:
+
+            if price <= 0:
+                mbx.showerror(
+                    "ERRO!", "O preço tem de ser maior que 0!")
+            else:
+                backend_system.adicionar_produto(
+                    Produto(code, name, category, price))
+                prod_window.destroy()
+                mbx.showinfo("Produto criado!",
+                             f"O produto {name} foi criado!")
 
 
 def verificar_adicionar_fornecedor(forn_window, codigo_entry, nome_entry, contacto_entry, email_entry, avaliacao_qualidade_entry, avaliacao_cumprimento_prazos_entry):
@@ -102,35 +193,79 @@ def on_click_fornecedores():
     else:
         def refresh(forn_lista):
             contar = 0
+            forn_lista.delete(0, "end")
             for forn in backend_system.lista_fornecedores:
                 forn_lista.insert(
-                    contar, f"{forn.codigo} | {forn.nome} | {forn.avaliacao_total()}")
+                    contar, f"{forn.codigo} | {forn.nome} | {forn.contacto} | {forn.email} | {forn.avaliacao_qualidade} | {forn.avaliacao_cumprimento_prazos} | {forn.avaliacao_total()}")
                 contar += 1
         forn_window = tk.Toplevel(window)
-        forn_window.geometry("500x280")
+        forn_window.geometry("500x350")
         tk.Label(forn_window, text="Fornecedores",
                  font=("Comic Sans MS", 20)).pack(pady=20)
-        forn_lista = tk.Listbox(forn_window, width=50, justify="center")
+        forn_lista = tk.Listbox(forn_window, width=60,
+                                justify="center", font=("Comic Sans MS", 10))
         refresh(forn_lista)
         forn_lista.pack()
         tk.Button(forn_window, text="Criar Fornecedor",
                   command=criar_fornecedor).pack(pady=5)
         tk.Button(forn_window, text="Reiniciar Listagem",
-                  command=refresh).pack(pady=5)
+                  command=lambda: refresh(forn_lista)).pack(pady=5)
 
 
 def on_click_produtos():
-    prod_window = tk.Toplevel(window)
-    prod_window.geometry("300x280")
-    tk.Label(prod_window, text="Produtos",
-             font=("Comic Sans MS", 20)).pack(pady=20)
+    if len(backend_system.lista_produtos) <= 0:
+        primeira_vez_prod = mbx.askyesno("Sem produto adicionado!",
+                                         "Aviso! Você ainda não adicionou nenhum produto!\nGostaria de adicionar um?")
+        if primeira_vez_prod == True:
+            criar_produto()
+    else:
+        def refresh(prod_lista):
+            contar = 0
+            prod_lista.delete(0, "end")
+            for prod in backend_system.lista_produtos:
+                prod_lista.insert(
+                    contar, f"{prod.codigo} | {prod.nome} | {prod.categoria} | {prod.preco}€")
+                contar += 1
+        prod_window = tk.Toplevel(window)
+        prod_window.geometry("500x350")
+        tk.Label(prod_window, text="Produtos",
+                 font=("Comic Sans MS", 20)).pack(pady=20)
+        prod_lista = tk.Listbox(prod_window, width=60,
+                                justify="center", font=("Comic Sans MS", 10))
+        refresh(prod_lista)
+        prod_lista.pack()
+        tk.Button(prod_window, text="Criar Produto",
+                  command=criar_produto).pack(pady=5)
+        tk.Button(prod_window, text="Reiniciar Listagem",
+                  command=lambda: refresh(prod_lista)).pack(pady=5)
 
 
 def on_click_encomendas():
-    enco_window = tk.Toplevel(window)
-    enco_window.geometry("300x280")
-    tk.Label(enco_window, text="Encomendas",
-             font=("Comic Sans MS", 20)).pack(pady=20)
+    if len(backend_system.lista_encomendas) <= 0:
+        primeira_vez_enco = mbx.askyesno("Sem encomenda adicionado!",
+                                         "Aviso! Você ainda não adicionou nenhuma encomenda!\nGostaria de adicionar uma?")
+        if primeira_vez_enco == True:
+            criar_encomenda()
+    else:
+        def refresh(enco_lista):
+            contar = 0
+            enco_lista.delete(0, "end")
+            for enco in backend_system.lista_encomendas:
+                enco_lista.insert(
+                    contar, f"{enco.codigo} | {enco.nome} | {enco.categoria} | {enco.preco}€")
+                contar += 1
+        enco_window = tk.Toplevel(window)
+        enco_window.geometry("500x350")
+        tk.Label(enco_window, text="Encomendas",
+                 font=("Comic Sans MS", 20)).pack(pady=20)
+        enco_lista = tk.Listbox(enco_window, width=60,
+                                justify="center", font=("Comic Sans MS", 10))
+        refresh(enco_lista)
+        enco_lista.pack()
+        tk.Button(enco_window, text="Criar Produto",
+                  command=criar_produto).pack(pady=5)
+        tk.Button(enco_window, text="Reiniciar Listagem",
+                  command=lambda: refresh(enco_lista)).pack(pady=5)
 
 
 os.system("cls")  # Limpa o terminal para debugging

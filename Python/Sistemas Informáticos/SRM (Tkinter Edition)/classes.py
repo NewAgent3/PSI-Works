@@ -44,6 +44,9 @@ class Produto:
         self.categoria = categoria
         self.preco = preco
 
+    def __str__(self):
+        return self.nome
+
 
 class Fornecedor:
     def __init__(self, codigo, nome, contacto, email, avaliacao_qualidade, avaliacao_cumprimento_prazos, lista_produtos):
@@ -60,3 +63,6 @@ class Fornecedor:
 
     def associar_produto(self, produto):
         self.lista_produtos.append(produto)
+
+    def __str__(self):
+        return self.nome
