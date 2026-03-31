@@ -14,9 +14,83 @@ def startup():
     ps3.playsound("SFX/startup.mp3")  # Windows XP lookin' ahh XD
 
 
-def criar_adicionar_fornecedor(code, name, phone, email, rating_quality, rating_deadlines):
-    backend_system.adicionar_fornecedor(Fornecedor(
-        code, name, phone, email, rating_quality, rating_deadlines))
+def criar_fornecedor():
+    criar_forn_window = tk.Toplevel(window)
+    criar_forn_window.geometry("500x500")
+    # CÓDIGO DO FORNECEDOR
+    tk.Label(criar_forn_window, text="Código",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    codigo_entry = tk.Entry(criar_forn_window)
+    codigo_entry.pack()
+    # NOME DO FORNECEDOR
+    tk.Label(criar_forn_window, text="Nome",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    nome_entry = tk.Entry(criar_forn_window)
+    nome_entry.pack()
+    # CONTACTO DO FORNECEDOR
+    tk.Label(criar_forn_window, text="Contacto",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    contacto_entry = tk.Entry(criar_forn_window)
+    contacto_entry.pack()
+    # E-MAIL DO FORNECEDOR
+    tk.Label(criar_forn_window, text="E-Mail",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    email_entry = tk.Entry(criar_forn_window)
+    email_entry.pack()
+    # AVALIAÇÃO DA QUALIDADE DO FORNECEDOR
+    tk.Label(criar_forn_window, text="Avaliação (Qualidade)",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    avaliacao_qualidade_entry = tk.Entry(criar_forn_window)
+    avaliacao_qualidade_entry.pack()
+    # AVALIAÇÃO DO CUMPRIMENTO DE PRAZOS DO FORNECEDOR
+    tk.Label(criar_forn_window, text="Avaliação (Cumprimento de Prazos)",
+             font=("Comic Sans MS", 20)).pack(pady=5)
+    avaliacao_cumprimento_prazos_entry = tk.Entry(
+        criar_forn_window)
+    avaliacao_cumprimento_prazos_entry.pack()
+    tk.Button(criar_forn_window, text="Criar",
+              command=lambda: verificar_adicionar_fornecedor(criar_forn_window, codigo_entry, nome_entry, contacto_entry, email_entry, avaliacao_qualidade_entry, avaliacao_cumprimento_prazos_entry)).pack(pady=5)
+
+
+def verificar_adicionar_fornecedor(forn_window, codigo_entry, nome_entry, contacto_entry, email_entry, avaliacao_qualidade_entry, avaliacao_cumprimento_prazos_entry):
+    code = str(codigo_entry.get())
+    name = str(nome_entry.get())
+    phone = str(contacto_entry.get())
+    email = str(email_entry.get())
+    rating_quality = avaliacao_qualidade_entry.get()
+    rating_deadlines = avaliacao_cumprimento_prazos_entry.get()
+    if code == "":
+        mbx.showerror("ERRO!", "O código está vazio!")
+    elif name == "":
+        mbx.showerror("ERRO!", "O nome está vazio!")
+    elif phone == "":
+        mbx.showerror("ERRO!", "O contacto está vazio!")
+    elif email == "":
+        mbx.showerror("ERRO!", "O e-mail está vazio!")
+    elif rating_quality == "":
+        mbx.showerror(
+            "ERRO!", "A avaliação da qualidade está vazia!")
+    elif rating_deadlines == "":
+        mbx.showerror(
+            "ERRO!", "A avaliação de cumprimento de prazos está vazia!")
+    else:
+        try:
+            rating_quality = int(rating_quality)
+            rating_deadlines = int(rating_deadlines)
+        except ValueError:
+            mbx.showerror(
+                "ERRO!", "Uma das avaliações contêm letras!")
+        else:
+
+            if rating_deadlines <= 0 or rating_quality <= 0:
+                mbx.showerror(
+                    "ERRO!", "A avaliação da qualidade e/ou do cumprimento de prazos está vazia!")
+            else:
+                backend_system.adicionar_fornecedor(Fornecedor(
+                    code, name, phone, email, rating_quality, rating_deadlines, []))
+                forn_window.destroy()
+                mbx.showinfo("Fornecedor criado!",
+                             f"O fornecedor {name} foi criado!")
 
 
 def on_click_fornecedores():
@@ -24,39 +98,21 @@ def on_click_fornecedores():
         primeira_vez_forn = mbx.askyesno("Sem fornecedor adicionado!",
                                          "Aviso! Você ainda não adicionou nenhum fornecedor!\nGostaria de adicionar um?")
         if primeira_vez_forn == True:
-            criar_forn_window = tk.Toplevel(window)
-            criar_forn_window.geometry("500x500")
-            # CÓDIGO DO FORNECEDOR
-            tk.Label(criar_forn_window, text="Código",
-                     font=("Comic Sans MS", 20)).pack(pady=5)
-            codigo = tk.Entry(criar_forn_window).pack()
-            # NOME DO FORNECEDOR
-            tk.Label(criar_forn_window, text="Nome",
-                     font=("Comic Sans MS", 20)).pack(pady=5)
-            nome = tk.Entry(criar_forn_window).pack()
-            # CONTACTO DO FORNECEDOR
-            tk.Label(criar_forn_window, text="Contacto",
-                     font=("Comic Sans MS", 20)).pack(pady=5)
-            contacto = tk.Entry(criar_forn_window).pack()
-            # E-MAIL DO FORNECEDOR
-            tk.Label(criar_forn_window, text="E-Mail",
-                     font=("Comic Sans MS", 20)).pack(pady=5)
-            email = tk.Entry(criar_forn_window).pack()
-            # AVALIAÇÃO DA QUALIDADE DO FORNECEDOR
-            tk.Label(criar_forn_window, text="Avaliação (Qualidade)",
-                     font=("Comic Sans MS", 20)).pack(pady=5)
-            avaliacao_qualidade = tk.Entry(criar_forn_window).pack()
-            # AVALIAÇÃO DO CUMPRIMENTO DE PRAZOS DO FORNECEDOR
-            tk.Label(criar_forn_window, text="Avaliação (Cumprimento de Prazos)",
-                     font=("Comic Sans MS", 20)).pack(pady=5)
-            avaliacao_cumprimento_prazos = tk.Entry(criar_forn_window).pack()
-            tk.Button(criar_forn_window, text="Criar",
-                      command=criar_adicionar_fornecedor(codigo, nome, contacto, email, avaliacao_qualidade, avaliacao_cumprimento_prazos)).pack(pady=5)
+            criar_fornecedor()
     else:
         forn_window = tk.Toplevel(window)
-        forn_window.geometry("300x280")
+        forn_window.geometry("500x280")
         tk.Label(forn_window, text="Fornecedores",
                  font=("Comic Sans MS", 20)).pack(pady=20)
+        forn_lista = tk.Listbox(forn_window, width=50, justify="center")
+        contar = 0
+        for forn in backend_system.lista_fornecedores:
+            forn_lista.insert(
+                contar, f"{forn.codigo} | {forn.nome} | {forn.avaliacao_total()}")
+            contar += 1
+        forn_lista.pack()
+        tk.Button(forn_window, text="Criar Fornecedor",
+                  command=criar_fornecedor).pack(pady=5)
 
 
 def on_click_produtos():
