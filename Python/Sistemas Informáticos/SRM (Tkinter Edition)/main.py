@@ -82,9 +82,9 @@ def verificar_adicionar_fornecedor(forn_window, codigo_entry, nome_entry, contac
                 "ERRO!", "Uma das avaliações contêm letras!")
         else:
 
-            if rating_deadlines <= 0 or rating_quality <= 0:
+            if (rating_deadlines <= 0 or rating_quality <= 0) or (rating_deadlines >= 100 or rating_quality >= 100):
                 mbx.showerror(
-                    "ERRO!", "A avaliação da qualidade e/ou do cumprimento de prazos está vazia!")
+                    "ERRO!", "A avaliação da qualidade e/ou do cumprimento de prazos está abaixo de 0 ou acima de 100!")
             else:
                 backend_system.adicionar_fornecedor(Fornecedor(
                     code, name, phone, email, rating_quality, rating_deadlines, []))
@@ -100,19 +100,23 @@ def on_click_fornecedores():
         if primeira_vez_forn == True:
             criar_fornecedor()
     else:
+        def refresh(forn_lista):
+            contar = 0
+            for forn in backend_system.lista_fornecedores:
+                forn_lista.insert(
+                    contar, f"{forn.codigo} | {forn.nome} | {forn.avaliacao_total()}")
+                contar += 1
         forn_window = tk.Toplevel(window)
         forn_window.geometry("500x280")
         tk.Label(forn_window, text="Fornecedores",
                  font=("Comic Sans MS", 20)).pack(pady=20)
         forn_lista = tk.Listbox(forn_window, width=50, justify="center")
-        contar = 0
-        for forn in backend_system.lista_fornecedores:
-            forn_lista.insert(
-                contar, f"{forn.codigo} | {forn.nome} | {forn.avaliacao_total()}")
-            contar += 1
+        refresh(forn_lista)
         forn_lista.pack()
         tk.Button(forn_window, text="Criar Fornecedor",
                   command=criar_fornecedor).pack(pady=5)
+        tk.Button(forn_window, text="Reiniciar Listagem",
+                  command=refresh).pack(pady=5)
 
 
 def on_click_produtos():
