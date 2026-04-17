@@ -1,0 +1,14 @@
+gantt
+    title Projeto Organização Atividade Informática
+    dateFormat  YYYY-MM-DD
+    tickInterval 1day
+    section Preparação Inicial
+    Definir Tema:def_tema, 2026-05-12, 3d
+    section Reservar e Promover
+    Reservar:reservar, after def_tema, 5d
+    Promover:promover, after def_tema, 4d
+    section Divulgação e Montagem
+    Imprimir:printing, after promover, 2d
+    Montagem:mounting, after printing, 3d
+    section Evento Principal
+    Evento e Arrumação:event_packing, after mounting, 2d
