@@ -283,11 +283,11 @@ tk.Label(window, text="SRM SYSTEM (PRO)",
          font=("Comic Sans MS", 20)).pack(pady=20)
 # The greatest font that there ever will exist XD
 btn_fornecedores = tk.Button(
-    window, text="Fornecedores", font=("Comic Sans MS", 16), command=on_click_fornecedores).pack(pady=5)
+    window, text="Fornecedores", font=("Comic Sans MS", 16), command=on_click_fornecedores, width=12).pack(pady=5)
 btn_produtos = tk.Button(window, text="Produtos",
-                         font=("Comic Sans MS", 16), command=on_click_produtos).pack(pady=5)
+                         font=("Comic Sans MS", 16), command=on_click_produtos, width=12).pack(pady=5)
 btn_encomendas = tk.Button(window, text="Encomendas",
-                           font=("Comic Sans MS", 16), command=on_click_encomendas).pack(pady=5)
+                           font=("Comic Sans MS", 16), command=on_click_encomendas, width=12).pack(pady=5)
 thd.Thread(target=startup, daemon=True).start()
 window.mainloop()  # You spin me round baby, right round!
 ps3.playsound("SFX/shutdown.mp3")  # Windows XP lookin' ahh XD

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Satisfying Sorter</title>
+<style>
+    body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #0f1117;
+        color: white;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+    }
+
+    .controls {
+        display: flex;
+        gap: 10px;
+        padding: 10px;
+        background: #1a1d25;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    button, select, input {
+        padding: 8px;
+        border-radius: 6px;
+        border: none;
+        background: #2a2f3a;
+        color: white;
+    }
+
+    button:hover {
+        background: #3a4150;
+        cursor: pointer;
+    }
+
+    #bars {
+        flex: 1;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        gap: 2px;
+        padding: 10px;
+    }
+
+    .bar {
+        width: 5px;
+        background: #4cc9f0;
+        transition: height 0.05s linear, background 0.1s;
+    }
+
+    .active {
+        background: #ff4d6d !important;
+    }
+</style>
+</head>
+<body>
+
+<div class="controls">
+    <label>Algorithm:</label>
+    <select id="algo">
+        <option>Bubble Sort</option>
+        <option>Insertion Sort</option>
+        <option>Quick Sort</option>
+        <option>Merge Sort</option>
+    </select>
+
+    <label>Items:</label>
+    <input type="range" id="size" min="10" max="1000" value="80">
+
+    <label>Speed:</label>
+    <input type="range" id="speed" min="1" max="100" value="30">
+
+    <button onclick="generate()">Shuffle</button>
+    <button onclick="startSort()">Start</button>
+</div>
+
+<div id="bars"></div>
+
+<script>
+let array = [];
+let speed = 50;
+
+function generate() {
+    const size = document.getElementById("size").value;
+    array = Array.from({length: size}, () => Math.random() * 400 + 10);
+    render();
+}
+
+function render(active = []) {
+    const container = document.getElementById("bars");
+    container.innerHTML = "";
+
+    array.forEach((val, i) => {
+        const bar = document.createElement("div");
+        bar.classList.add("bar");
+        bar.style.height = val + "px";
+
+        if (active.includes(i)) bar.classList.add("active");
+
+        container.appendChild(bar);
+    });
+}
+
+function delay() {
+    return new Promise(res => setTimeout(res, speed));
+}
+
+async function bubbleSort() {
+    for (let i = 0; i < array.length; i++) {
+        for (let j = 0; j < array.length - i - 1; j++) {
+            render([j, j + 1]);
+            if (array[j] > array[j + 1]) {
+                [array[j], array[j + 1]] = [array[j + 1], array[j]];
+            }
+            await delay();
+        }
+    }
+}
+
+async function insertionSort() {
+    for (let i = 1; i < array.length; i++) {
+        let key = array[i];
+        let j = i - 1;
+
+        while (j >= 0 && array[j] > key) {
+            array[j + 1] = array[j];
+            j--;
+            render([j, j + 1]);
+            await delay();
+        }
+        array[j + 1] = key;
+        render();
+        await delay();
+    }
+}
+
+async function quickSort(left = 0, right = array.length - 1) {
+    if (left >= right) return;
+
+    let pivot = array[right];
+    let i = left;
+
+    for (let j = left; j < right; j++) {
+        render([j, right]);
+        if (array[j] < pivot) {
+            [array[i], array[j]] = [array[j], array[i]];
+            i++;
+        }
+        await delay();
+    }
+
+    [array[i], array[right]] = [array[right], array[i]];
+    await delay();
+
+    await quickSort(left, i - 1);
+    await quickSort(i + 1, right);
+}
+
+async function mergeSort(left = 0, right = array.length - 1) {
+    if (left >= right) return;
+
+    const mid = Math.floor((left + right) / 2);
+    await mergeSort(left, mid);
+    await mergeSort(mid + 1, right);
+    await merge(left, mid, right);
+}
+
+async function merge(left, mid, right) {
+    let temp = [];
+    let i = left, j = mid + 1;
+
+    while (i <= mid && j <= right) {
+        render([i, j]);
+        if (array[i] < array[j]) temp.push(array[i++]);
+        else temp.push(array[j++]);
+        await delay();
+    }
+
+    while (i <= mid) temp.push(array[i++]);
+    while (j <= right) temp.push(array[j++]);
+
+    for (let k = 0; k < temp.length; k++) {
+        array[left + k] = temp[k];
+        render([left + k]);
+        await delay();
+    }
+}
+
+async function startSort() {
+    speed = 101 - document.getElementById("speed").value;
+    const algo = document.getElementById("algo").value;
+
+    if (algo === "Bubble Sort") await bubbleSort();
+    if (algo === "Insertion Sort") await insertionSort();
+    if (algo === "Quick Sort") await quickSort();
+    if (algo === "Merge Sort") await mergeSort();
+}
+
+generate();
+</script>
+
+</body>
+</html>
