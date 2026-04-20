@@ -1,0 +1,13 @@
+gantt
+    title Loja online de Artesanato
+    dateFormat  YYYY-MM-DD
+    tickInterval 1day
+    section Preparação Inicial
+    Definir Catálogo:A, 2026-06-15, 4d
+    section Website e Marca
+    Desenvolvimento do Website:B, after A, 7d
+    Identidade da Marca:C, after A, 3d
+    Integração Visual:D, after C, 2d
+    section Finalização
+    Configurar Metodos de Pagamento:E, after D, 3d
+    Divulgação Inicial:F, after E, 2d
