@@ -1,0 +1,14 @@
+gantt
+    title PowerWare - Loja de Informática
+    dateFormat  YYYY-MM-DD
+    tickInterval 1day
+    section Verificação Reparação
+    Verificação:A, 2026-06-04, 1d
+    Reparação de Hardware:B, after A, 4d
+    section Análise Instalação
+    Análise Problemas Software:C, after A, 2d
+    Instalação Configuração Programas Necessários:D, after C, 3d
+    section Peças em Falta Instalação e Config. Final
+    Encomenda Peças em Falta: E, after B, 5d
+    Instalação Novos Componentes: F, after E, 2d
+    Config. Final Testes Sistema: G, after F, 2d
