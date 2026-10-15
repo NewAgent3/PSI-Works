@@ -1,0 +1,2041 @@
+"""
+PathTracer++ Scene Editor (Blender-style 3D)
+============================================
+A Blender-inspired 3D scene editor for the PathTracer++ renderer.
+
+Features
+--------
+* Real-time perspective 3D viewport with orbit / pan / zoom navigation
+* Software 3D renderer (pure Tkinter + Python, zero dependencies)
+* Multi-viewport layout: large perspective + Top / Front / Side orthographic
+* Transform gizmos (move handles + scale handle) on the active object
+* Outliner panel with type icons (mesh / light / camera)
+* Tabbed Properties Editor (Object, Material, World, Render)
+* Blender-like dark theme and shortcuts:
+    - MMB drag        : orbit
+    - Shift+MMB drag  : pan
+    - Mouse wheel     : zoom
+    - Numpad 1 / 3 / 7: front / right / top view
+    - Numpad 5        : toggle perspective/ortho
+    - Numpad .        : frame selected
+    - G / S / R       : translate / scale (R unused for spheres)
+    - X / Delete      : delete
+    - Shift+D         : duplicate
+    - A               : add menu
+    - F12             : render
+* Drop-in compatible with the existing patched pathtracer.exe and
+  the original `.scene` text format.
+
+Tested with Python 3.8+ — uses only the standard library.
+"""
+
+import json
+import math
+import os
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+from tkinter import colorchooser, filedialog, messagebox, ttk
+
+# ---------------------------------------------------------------------------
+#  Theme  (Blender 3.x dark)
+# ---------------------------------------------------------------------------
+TH = {
+    "bg":            "#232629",
+    "bg_dark":       "#1b1d1f",
+    "bg_panel":      "#2b2e31",
+    "bg_header":     "#3a3d40",
+    "bg_view":       "#3c3f42",
+    "bg_view_dark":  "#2a2c2e",
+    "fg":            "#dcdcdc",
+    "fg_dim":        "#9a9a9a",
+    "accent":        "#4772b3",
+    "accent_hi":     "#5b8bd1",
+    "warn":          "#d97a2a",
+    "ok":            "#6abf4b",
+    "grid":          "#4a4d50",
+    "grid_axis_x":   "#a64242",
+    "grid_axis_y":   "#5b9c3a",
+    "grid_axis_z":   "#3a6db8",
+    "select":        "#f59e0b",
+    "active":        "#fbbf24",
+}
+
+# ---------------------------------------------------------------------------
+#  Data model — same as original, fully backwards compatible
+# ---------------------------------------------------------------------------
+MATERIALS = ("lambert", "metal", "dielectric", "light")
+DEFAULT_MATERIAL = {
+    "lambert":    {"r": 0.75, "g": 0.30, "b": 0.25, "fuzz": 0.0,  "ir": 1.5},
+    "metal":      {"r": 0.88, "g": 0.72, "b": 0.28, "fuzz": 0.05, "ir": 1.5},
+    "dielectric": {"r": 1.00, "g": 1.00, "b": 1.00, "fuzz": 0.0,  "ir": 1.5},
+    "light":      {"r": 8.0,  "g": 7.6,  "b": 6.8,  "fuzz": 0.0,  "ir": 1.5},
+}
+SKY_MODES = ("blue", "studio", "black", "sunset")
+
+MAT_ICON = {"lambert": "●", "metal": "◆", "dielectric": "○", "light": "✦"}
+
+
+def new_sphere(x=0.0, y=1.0, z=0.0, radius=1.0, mat="lambert", name=None):
+    m = dict(DEFAULT_MATERIAL[mat])
+    return {
+        "x": x, "y": y, "z": z,
+        "radius": radius,
+        "material": mat,
+        **m,
+        "name": name or mat,
+    }
+
+
+def new_default_scene():
+    return {
+        "camera": {
+            "lookfrom": [6.7, 2.6, 6.8],
+            "lookat":   [0.0, 1.0, 0.2],
+            "vup":      [0.0, 1.0, 0.0],
+            "vfov":     32.0,
+            "aperture": 0.04,
+            "focus":    0.0,
+        },
+        "sky": "blue",
+        "spheres": [
+            {"x": 0, "y": -1000, "z": 0, "radius": 1000,
+             "material": "lambert", "r": 0.55, "g": 0.58, "b": 0.62,
+             "fuzz": 0.0, "ir": 1.5, "name": "ground"},
+            {"x": 0.0, "y": 1.1, "z": 0.0, "radius": 1.1,
+             "material": "lambert", "r": 0.75, "g": 0.30, "b": 0.25,
+             "fuzz": 0.0, "ir": 1.5, "name": "red_ball"},
+            {"x": -2.3, "y": 1.0, "z": 0.2, "radius": 1.0,
+             "material": "dielectric", "r": 1.0, "g": 1.0, "b": 1.0,
+             "fuzz": 0.0, "ir": 1.5, "name": "glass_ball"},
+            {"x": 2.4, "y": 1.0, "z": -0.1, "radius": 1.0,
+             "material": "metal", "r": 0.88, "g": 0.72, "b": 0.28,
+             "fuzz": 0.03, "ir": 1.5, "name": "gold_ball"},
+            {"x": 3.8, "y": 5.0, "z": 2.2, "radius": 1.45,
+             "material": "light", "r": 8.0, "g": 7.6, "b": 6.8,
+             "fuzz": 0.0, "ir": 1.5, "name": "key_light"},
+        ],
+        "render": {
+            "width": 960, "height": 540, "spp": 64, "depth": 12,
+            "threads": 0, "seed": 0,
+            "output": "render.bmp",
+            "exe": "pathtracer.exe",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+#  .scene file writer  (unchanged format — patched pathtracer.c reads this)
+# ---------------------------------------------------------------------------
+def write_scene_file(scene, path):
+    cam = scene["camera"]
+    lines = ["# PathTracer++ custom scene file",
+             "# generated by scene_editor.py",
+             f"sky {scene.get('sky', 'blue')}",
+             "camera lookfrom {:.6f} {:.6f} {:.6f}".format(*cam["lookfrom"]),
+             "camera lookat   {:.6f} {:.6f} {:.6f}".format(*cam["lookat"]),
+             "camera vup      {:.6f} {:.6f} {:.6f}".format(*cam["vup"]),
+             f"camera vfov     {cam['vfov']:.6f}",
+             f"camera aperture {cam['aperture']:.6f}",
+             f"camera focus    {cam['focus']:.6f}"]
+    for s in scene["spheres"]:
+        m = s["material"]
+        if m == "lambert":
+            lines.append("sphere lambert {x:.6f} {y:.6f} {z:.6f} {radius:.6f} "
+                         "{r:.6f} {g:.6f} {b:.6f}".format(**s))
+        elif m == "metal":
+            lines.append("sphere metal {x:.6f} {y:.6f} {z:.6f} {radius:.6f} "
+                         "{r:.6f} {g:.6f} {b:.6f} {fuzz:.6f}".format(**s))
+        elif m == "dielectric":
+            lines.append("sphere dielectric {x:.6f} {y:.6f} {z:.6f} "
+                         "{radius:.6f} {ir:.6f}".format(**s))
+        elif m == "light":
+            lines.append("sphere light {x:.6f} {y:.6f} {z:.6f} {radius:.6f} "
+                         "{r:.6f} {g:.6f} {b:.6f}".format(**s))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+# ===========================================================================
+#  Vec3 / matrix helpers — small inline 3D math
+# ===========================================================================
+def v_sub(a, b):  return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+def v_add(a, b):  return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+def v_mul(a, s):  return (a[0] * s, a[1] * s, a[2] * s)
+def v_dot(a, b):  return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+def v_len(a):     return math.sqrt(v_dot(a, a))
+def v_norm(a):
+    l = v_len(a)
+    return (0.0, 0.0, 0.0) if l < 1e-12 else (a[0]/l, a[1]/l, a[2]/l)
+def v_cross(a, b):
+    return (a[1]*b[2] - a[2]*b[1],
+            a[2]*b[0] - a[0]*b[2],
+            a[0]*b[1] - a[1]*b[0])
+
+
+# ===========================================================================
+#  Camera for the editor viewport (orbit camera)
+# ===========================================================================
+class OrbitCam:
+    """Spherical-coordinate orbit camera around a pivot."""
+
+    def __init__(self):
+        self.pivot = [0.0, 1.0, 0.0]
+        self.dist  = 14.0
+        self.yaw   = math.radians(-35)   # around Y
+        self.pitch = math.radians(25)    # up from XZ
+        self.fov   = 45.0
+        self.ortho = False
+        self.ortho_size = 8.0
+
+    def eye(self):
+        cp = math.cos(self.pitch); sp = math.sin(self.pitch)
+        cy = math.cos(self.yaw);   sy = math.sin(self.yaw)
+        dir_ = (cp * sy, sp, cp * cy)
+        return v_add(self.pivot, v_mul(dir_, self.dist))
+
+    def forward(self):
+        return v_norm(v_sub(self.pivot, self.eye()))
+
+    def right(self):
+        return v_norm(v_cross(self.forward(), (0, 1, 0)))
+
+    def up(self):
+        return v_norm(v_cross(self.right(), self.forward()))
+
+    # ---------- projection / view ----------
+    def project(self, p, w, h):
+        """World point -> (sx, sy, depth). Returns None if clipped behind cam."""
+        eye = self.eye()
+        f = self.forward(); r = self.right(); u = self.up()
+        d = v_sub(p, eye)
+        # camera-space (x=right, y=up, z=forward)
+        cx = v_dot(d, r); cy = v_dot(d, u); cz = v_dot(d, f)
+        if self.ortho:
+            asp = w / max(1, h)
+            half = self.ortho_size
+            sx = (cx / (half * asp)) * (w * 0.5) + w * 0.5
+            sy = (-cy / half) * (h * 0.5) + h * 0.5
+            return sx, sy, cz
+        if cz <= 0.05:
+            return None
+        focal = (h * 0.5) / math.tan(math.radians(self.fov) * 0.5)
+        sx = (cx * focal) / cz + w * 0.5
+        sy = (-cy * focal) / cz + h * 0.5
+        return sx, sy, cz
+
+    def project_radius(self, p, radius, w, h):
+        """Approximate screen-space radius of a sphere."""
+        if self.ortho:
+            half = self.ortho_size
+            return (radius / half) * (h * 0.5)
+        eye = self.eye()
+        f = self.forward()
+        cz = v_dot(v_sub(p, eye), f)
+        if cz <= 0.05:
+            return 0
+        focal = (h * 0.5) / math.tan(math.radians(self.fov) * 0.5)
+        return (radius * focal) / cz
+
+    # ---------- navigation ----------
+    def orbit(self, dyaw, dpitch):
+        self.yaw   += dyaw
+        self.pitch = max(math.radians(-89), min(math.radians(89),
+                                                self.pitch + dpitch))
+
+    def pan(self, dx, dy, w, h):
+        # convert pixel deltas to world deltas at the pivot
+        scale = self.dist * math.tan(math.radians(self.fov) * 0.5) / (h * 0.5)
+        if self.ortho:
+            scale = self.ortho_size / (h * 0.5)
+        r = self.right(); u = self.up()
+        delta = v_add(v_mul(r, -dx * scale), v_mul(u, dy * scale))
+        self.pivot[0] += delta[0]
+        self.pivot[1] += delta[1]
+        self.pivot[2] += delta[2]
+
+    def zoom(self, factor):
+        self.dist = max(0.5, min(500.0, self.dist * factor))
+        self.ortho_size = max(0.5, min(200.0, self.ortho_size * factor))
+
+    def frame(self, p, radius=2.0):
+        self.pivot = list(p)
+        self.dist = max(3.0, radius * 4.0)
+        self.ortho_size = max(2.5, radius * 3.0)
+
+
+# ===========================================================================
+#  Viewport3D — software-rasterised 3D view of the scene
+# ===========================================================================
+class Viewport3D(tk.Canvas):
+    """A 3D viewport. Renders the scene with depth sorting + simple shading,
+       supports orbit/pan/zoom, picking, and a transform gizmo on the
+       active object."""
+
+    AXIS_VIEWS = {
+        "1":  ("front",  0.0,            0.0,           False),
+        "3":  ("right",  math.pi / 2,    0.0,           False),
+        "7":  ("top",    0.0,            math.pi / 2 - 0.001, False),
+        "1c": ("back",   math.pi,        0.0,           False),
+        "3c": ("left",  -math.pi / 2,    0.0,           False),
+        "7c": ("bottom", 0.0,           -math.pi / 2 + 0.001, False),
+    }
+
+    def __init__(self, master, app, label="View", **kw):
+        super().__init__(master, bg=TH["bg_view_dark"], highlightthickness=0,
+                         bd=0, **kw)
+        self.app = app
+        self.label = label
+        self.cam = OrbitCam()
+        self._drag = None
+        self._gizmo_drag = None
+        self._needs_redraw = True
+        self.vw = 1; self.vh = 1
+        self.show_gizmo = True
+        self.show_camera = True
+        self.show_grid = True
+
+        self.bind("<Configure>",        self._on_configure)
+        self.bind("<ButtonPress-2>",    self._on_mmb_down)
+        self.bind("<B2-Motion>",        self._on_mmb_drag)
+        self.bind("<ButtonRelease-2>",  self._on_mmb_up)
+        # also map RMB to orbit for laptop trackpads
+        self.bind("<ButtonPress-3>",    self._on_mmb_down)
+        self.bind("<B3-Motion>",        self._on_mmb_drag)
+        self.bind("<ButtonRelease-3>",  self._on_mmb_up)
+        self.bind("<ButtonPress-1>",    self._on_lmb_down)
+        self.bind("<B1-Motion>",        self._on_lmb_drag)
+        self.bind("<ButtonRelease-1>",  self._on_lmb_up)
+        # Wheel (Windows / Mac)
+        self.bind("<MouseWheel>",       self._on_wheel)
+        # Wheel (Linux X11)
+        self.bind("<Button-4>",         lambda e: self._wheel(120))
+        self.bind("<Button-5>",         lambda e: self._wheel(-120))
+        self.bind("<Enter>",            lambda e: self.focus_set())
+        self.bind("<Double-Button-1>",  self._on_double_click)
+
+    # ---------- redraw scheduling ----------
+    def request_redraw(self):
+        if not self._needs_redraw:
+            self._needs_redraw = True
+            self.after_idle(self._do_redraw)
+
+    def _on_configure(self, evt):
+        self.vw = max(1, evt.width); self.vh = max(1, evt.height)
+        self.request_redraw()
+
+    # ---------- mouse handling ----------
+    def _on_mmb_down(self, evt):
+        self._drag = ("orbit" if not (evt.state & 0x0001) else "pan",
+                      evt.x, evt.y)
+
+    def _on_mmb_drag(self, evt):
+        if not self._drag:
+            return
+        mode, x0, y0 = self._drag
+        dx, dy = evt.x - x0, evt.y - y0
+        # apply shift mid-drag dynamically
+        if evt.state & 0x0001:
+            mode = "pan"
+        if mode == "orbit":
+            self.cam.orbit(-dx * 0.01, -dy * 0.01)
+        else:
+            self.cam.pan(dx, dy, self.vw, self.vh)
+        self._drag = (mode, evt.x, evt.y)
+        self.request_redraw()
+
+    def _on_mmb_up(self, _):
+        self._drag = None
+
+    def _on_wheel(self, evt):
+        delta = evt.delta
+        self._wheel(delta)
+
+    def _wheel(self, delta):
+        f = 0.9 if delta > 0 else 1.1
+        self.cam.zoom(f)
+        self.request_redraw()
+
+    def _on_lmb_down(self, evt):
+        self.focus_set()
+        # 1) hit-test gizmo handles on the selected object
+        if self.app.selected_index is not None and self.show_gizmo:
+            handle = self._pick_gizmo(evt.x, evt.y)
+            if handle:
+                s = self.app.scene["spheres"][self.app.selected_index]
+                self._gizmo_drag = {
+                    "axis": handle,
+                    "x0": evt.x, "y0": evt.y,
+                    "sx": s["x"], "sy": s["y"], "sz": s["z"],
+                    "sr": s["radius"],
+                }
+                return
+        # 2) otherwise pick a sphere
+        idx = self._pick_sphere(evt.x, evt.y)
+        self.app.set_selection(idx)
+
+    def _on_lmb_drag(self, evt):
+        if not self._gizmo_drag or self.app.selected_index is None:
+            return
+        gd = self._gizmo_drag
+        s = self.app.scene["spheres"][self.app.selected_index]
+        # Project a unit axis at the original position into screen space and use
+        # the dot product of mouse-delta against that screen axis as the
+        # world-space distance dragged.
+        p0 = (gd["sx"], gd["sy"], gd["sz"])
+        axis_map = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}
+        if gd["axis"] in axis_map:
+            axis = axis_map[gd["axis"]]
+            proj0 = self.cam.project(p0, self.vw, self.vh)
+            proj1 = self.cam.project(v_add(p0, axis), self.vw, self.vh)
+            if proj0 and proj1:
+                ax = (proj1[0] - proj0[0], proj1[1] - proj0[1])
+                al = ax[0]*ax[0] + ax[1]*ax[1]
+                if al > 1e-6:
+                    md = (evt.x - gd["x0"], evt.y - gd["y0"])
+                    t = (md[0]*ax[0] + md[1]*ax[1]) / al
+                    if gd["axis"] == "x": s["x"] = gd["sx"] + t
+                    if gd["axis"] == "y": s["y"] = gd["sy"] + t
+                    if gd["axis"] == "z": s["z"] = gd["sz"] + t
+        elif gd["axis"] == "scale":
+            # uniform scale based on mouse distance from the object center
+            proj0 = self.cam.project(p0, self.vw, self.vh)
+            if proj0:
+                d0 = math.hypot(gd["x0"] - proj0[0], gd["y0"] - proj0[1])
+                d1 = math.hypot(evt.x - proj0[0], evt.y - proj0[1])
+                if d0 > 4:
+                    f = d1 / d0
+                    s["radius"] = max(0.01, gd["sr"] * f)
+        self.app.on_selected_transformed()
+
+    def _on_lmb_up(self, _):
+        self._gizmo_drag = None
+
+    def _on_double_click(self, evt):
+        idx = self._pick_sphere(evt.x, evt.y)
+        if idx is not None:
+            s = self.app.scene["spheres"][idx]
+            if s["radius"] < 50:
+                self.cam.frame((s["x"], s["y"], s["z"]), s["radius"])
+                self.request_redraw()
+
+    # ---------- picking ----------
+    def _pick_sphere(self, mx, my):
+        best, bestd = None, 1e9
+        for i, s in enumerate(self.app.scene["spheres"]):
+            if s["radius"] > 50:  # ground/walls ignored
+                continue
+            p = self.cam.project((s["x"], s["y"], s["z"]),
+                                 self.vw, self.vh)
+            if p is None:
+                continue
+            rp = max(6.0, self.cam.project_radius(
+                (s["x"], s["y"], s["z"]), s["radius"], self.vw, self.vh))
+            d = math.hypot(mx - p[0], my - p[1])
+            if d <= rp and p[2] < bestd:
+                bestd = p[2]; best = i
+        return best
+
+    def _pick_gizmo(self, mx, my):
+        s = self.app.scene["spheres"][self.app.selected_index]
+        if s["radius"] > 50:
+            return None
+        p0 = (s["x"], s["y"], s["z"])
+        proj0 = self.cam.project(p0, self.vw, self.vh)
+        if proj0 is None:
+            return None
+        gl = self._gizmo_length(s["radius"])
+        for axis, vec in (("x", (gl, 0, 0)), ("y", (0, gl, 0)), ("z", (0, 0, gl))):
+            pe = self.cam.project(v_add(p0, vec), self.vw, self.vh)
+            if pe is None: continue
+            d = self._dist_to_segment(mx, my, proj0[0], proj0[1], pe[0], pe[1])
+            if d < 6:
+                return axis
+        # scale handle (white cube at end of "no axis" position — top-right of center)
+        sxh = proj0[0] + 30; syh = proj0[1] - 30
+        if abs(mx - sxh) < 7 and abs(my - syh) < 7:
+            return "scale"
+        return None
+
+    @staticmethod
+    def _dist_to_segment(px, py, x1, y1, x2, y2):
+        dx, dy = x2 - x1, y2 - y1
+        L2 = dx*dx + dy*dy
+        if L2 < 1e-6:
+            return math.hypot(px - x1, py - y1)
+        t = max(0.0, min(1.0, ((px - x1)*dx + (py - y1)*dy) / L2))
+        cx, cy = x1 + t*dx, y1 + t*dy
+        return math.hypot(px - cx, py - cy)
+
+    def _gizmo_length(self, radius):
+        return max(0.8, radius * 1.6)
+
+    # ---------- rendering ----------
+    def _do_redraw(self):
+        self._needs_redraw = False
+        self.delete("all")
+        w, h = self.vw, self.vh
+        if w < 4 or h < 4:
+            return
+
+        # background gradient (subtle viewport feel)
+        self._draw_bg(w, h)
+
+        # grid
+        if self.show_grid:
+            self._draw_grid(w, h)
+
+        # build draw list of spheres, sorted back-to-front
+        items = []
+        for i, sp in enumerate(self.app.scene["spheres"]):
+            if sp["radius"] > 50:  # skip ground/walls
+                continue
+            p = self.cam.project((sp["x"], sp["y"], sp["z"]), w, h)
+            if p is None:
+                continue
+            rp = self.cam.project_radius((sp["x"], sp["y"], sp["z"]),
+                                         sp["radius"], w, h)
+            if rp < 1:
+                continue
+            items.append((p[2], i, sp, p, rp))
+        items.sort(key=lambda t: -t[0])
+
+        # shading direction (key light from upper-right-ish)
+        L = v_norm((0.5, 0.8, 0.3))
+
+        for depth, i, sp, p, rp in items:
+            self._draw_sphere(i, sp, p, rp, L)
+
+        # camera widget
+        if self.show_camera:
+            self._draw_camera_widget(w, h)
+
+        # gizmo on selection
+        if self.show_gizmo and self.app.selected_index is not None:
+            sp = self.app.scene["spheres"][self.app.selected_index]
+            if sp["radius"] < 50:
+                self._draw_gizmo(sp, w, h)
+
+        # HUD
+        self._draw_hud(w, h)
+
+    def _draw_bg(self, w, h):
+        # subtle vertical gradient using a few horizontal bars
+        steps = 16
+        for i in range(steps):
+            t = i / (steps - 1)
+            c = self._lerp_hex(TH["bg_view"], TH["bg_view_dark"], t)
+            y0 = int(h * i / steps); y1 = int(h * (i + 1) / steps)
+            self.create_rectangle(0, y0, w, y1, fill=c, outline="")
+
+    def _draw_grid(self, w, h):
+        # Draw an N×N grid on Y=0 plane in world space, plus axes
+        N = 10
+        step = 1.0
+        # grid lines parallel to X (vary Z)
+        for k in range(-N, N + 1):
+            p1 = (-N * step, 0, k * step)
+            p2 = ( N * step, 0, k * step)
+            a = self.cam.project(p1, w, h)
+            b = self.cam.project(p2, w, h)
+            if a and b:
+                col = TH["grid_axis_x"] if k == 0 else TH["grid"]
+                width = 2 if k == 0 else 1
+                self.create_line(a[0], a[1], b[0], b[1],
+                                 fill=col, width=width)
+        # grid lines parallel to Z (vary X)
+        for k in range(-N, N + 1):
+            p1 = (k * step, 0, -N * step)
+            p2 = (k * step, 0,  N * step)
+            a = self.cam.project(p1, w, h)
+            b = self.cam.project(p2, w, h)
+            if a and b:
+                col = TH["grid_axis_z"] if k == 0 else TH["grid"]
+                width = 2 if k == 0 else 1
+                self.create_line(a[0], a[1], b[0], b[1],
+                                 fill=col, width=width)
+        # Y axis (up) — green
+        a = self.cam.project((0, 0, 0), w, h)
+        b = self.cam.project((0, 3, 0), w, h)
+        if a and b:
+            self.create_line(a[0], a[1], b[0], b[1],
+                             fill=TH["grid_axis_y"], width=2)
+
+    def _draw_sphere(self, idx, sp, p, rp, L):
+        sx, sy, _ = p
+        rp = max(2.5, rp)
+        mat = sp["material"]
+        selected = (idx == self.app.selected_index)
+
+        # base color
+        if mat == "light":
+            base = self._clamp_rgb(sp["r"]/8 + 0.4, sp["g"]/8 + 0.4, sp["b"]/8 + 0.3)
+        else:
+            base = self._clamp_rgb(sp["r"], sp["g"], sp["b"])
+
+        # fake shading: outline + a few stacked ovals to suggest shading
+        # offset for highlight in screen space (light from upper-right)
+        hx = sx - rp * 0.35
+        hy = sy - rp * 0.35
+
+        outline = TH["select"] if selected else (
+            "#9cf" if mat == "dielectric" else "#000")
+        ow = 2 if selected else 1
+
+        if mat == "dielectric":
+            # glass: hollow ring with subtle inner ring
+            self.create_oval(sx - rp, sy - rp, sx + rp, sy + rp,
+                             outline="#9cf", width=ow, fill="")
+            self.create_oval(sx - rp*0.6, sy - rp*0.6, sx + rp*0.6, sy + rp*0.6,
+                             outline="#cce8ff", width=1, fill="")
+            if selected:
+                self.create_oval(sx - rp - 3, sy - rp - 3, sx + rp + 3, sy + rp + 3,
+                                 outline=TH["select"], width=2)
+        else:
+            # filled disc with shaded core
+            fill_hex = self._rgb_hex(*base)
+            self.create_oval(sx - rp, sy - rp, sx + rp, sy + rp,
+                             outline=outline, width=ow, fill=fill_hex)
+            # subtle inner shadow rim (darken edge)
+            dark = self._mul_rgb(base, 0.55)
+            self.create_oval(sx - rp*0.92, sy - rp*0.92, sx + rp*0.92, sy + rp*0.92,
+                             outline=self._rgb_hex(*dark), width=0)
+            self.create_oval(sx - rp, sy - rp, sx + rp, sy + rp,
+                             outline=outline, width=ow, fill="")
+            # core
+            core = self._rgb_hex(*base)
+            self.create_oval(sx - rp*0.88, sy - rp*0.88, sx + rp*0.88, sy + rp*0.88,
+                             fill=core, outline="")
+            # specular highlight
+            if mat == "metal":
+                hl = self._rgb_hex(*self._clamp_rgb(*self._add_rgb(base, 0.4)))
+                self.create_oval(hx - rp*0.35, hy - rp*0.35, hx + rp*0.35, hy + rp*0.35,
+                                 fill=hl, outline="")
+                hl2 = "#ffffff"
+                self.create_oval(hx - rp*0.12, hy - rp*0.12, hx + rp*0.12, hy + rp*0.12,
+                                 fill=hl2, outline="")
+            elif mat == "light":
+                # emissive glow
+                for k in range(4, 0, -1):
+                    self.create_oval(sx - rp - k*3, sy - rp - k*3,
+                                     sx + rp + k*3, sy + rp + k*3,
+                                     outline=self._rgb_hex(*self._mul_rgb((1,1,0.7),
+                                                                          0.18 + 0.05*k)),
+                                     width=1)
+                self.create_oval(hx - rp*0.25, hy - rp*0.25, hx + rp*0.25, hy + rp*0.25,
+                                 fill="#ffffff", outline="")
+            else:
+                hl = self._rgb_hex(*self._clamp_rgb(*self._add_rgb(base, 0.25)))
+                self.create_oval(hx - rp*0.28, hy - rp*0.28, hx + rp*0.28, hy + rp*0.28,
+                                 fill=hl, outline="")
+
+        # name label
+        name = sp.get("name", "")
+        if name and rp > 4:
+            label_y = sy - rp - 6
+            self.create_text(sx, label_y, text=name,
+                             fill=TH["active"] if selected else TH["fg"],
+                             font=("Segoe UI", 8, "bold" if selected else "normal"))
+
+    def _draw_gizmo(self, sp, w, h):
+        p0 = (sp["x"], sp["y"], sp["z"])
+        a = self.cam.project(p0, w, h)
+        if a is None:
+            return
+        gl = self._gizmo_length(sp["radius"])
+        axes = [
+            ("x", (gl, 0, 0), TH["grid_axis_x"]),
+            ("y", (0, gl, 0), TH["grid_axis_y"]),
+            ("z", (0, 0, gl), TH["grid_axis_z"]),
+        ]
+        # sort axes by depth so the front one is drawn last
+        cam_f = self.cam.forward()
+        axes.sort(key=lambda t: v_dot(t[1], cam_f))
+        for axis, vec, col in axes:
+            e = self.cam.project(v_add(p0, vec), w, h)
+            if e is None: continue
+            self.create_line(a[0], a[1], e[0], e[1],
+                             fill=col, width=3, capstyle=tk.ROUND)
+            # arrowhead (small filled circle)
+            self.create_oval(e[0]-5, e[1]-5, e[0]+5, e[1]+5,
+                             fill=col, outline="#fff", width=1)
+            # label
+            self.create_text(e[0] + 8, e[1] - 8, text=axis.upper(),
+                             fill=col, font=("Segoe UI", 9, "bold"))
+        # scale handle
+        sxh = a[0] + 30; syh = a[1] - 30
+        self.create_line(a[0], a[1], sxh, syh, fill="#cccccc", width=1, dash=(2, 2))
+        self.create_rectangle(sxh - 6, syh - 6, sxh + 6, syh + 6,
+                              fill="#dddddd", outline="#fff")
+        self.create_text(sxh + 12, syh, text="S", fill="#ddd",
+                         font=("Segoe UI", 8, "bold"), anchor="w")
+
+    def _draw_camera_widget(self, w, h):
+        cam = self.app.scene["camera"]
+        lf = tuple(cam["lookfrom"]); la = tuple(cam["lookat"])
+        pe = self.cam.project(lf, w, h)
+        pa = self.cam.project(la, w, h)
+        if pe is None:
+            return
+        # body
+        self.create_oval(pe[0]-7, pe[1]-7, pe[0]+7, pe[1]+7,
+                         fill=TH["accent"], outline="#fff", width=2)
+        # frustum (4 corners at lookat) — small pyramid hint
+        # build a small frustum in world space
+        f = v_norm(v_sub(la, lf))
+        if v_len(f) > 1e-6:
+            r = v_norm(v_cross(f, (0, 1, 0)))
+            u = v_norm(v_cross(r, f))
+            dist = v_len(v_sub(la, lf))
+            half = math.tan(math.radians(cam["vfov"]) * 0.5) * dist
+            corners = []
+            for sx, sy in ((-1,-1),(1,-1),(1,1),(-1,1)):
+                corner = v_add(la, v_add(v_mul(r, sx * half * 1.4),
+                                          v_mul(u, sy * half)))
+                corners.append(corner)
+            cps = []
+            for c in corners:
+                cp = self.cam.project(c, w, h)
+                cps.append(cp)
+            for cp in cps:
+                if cp:
+                    self.create_line(pe[0], pe[1], cp[0], cp[1],
+                                     fill="#7fa8e6", width=1)
+            for k in range(4):
+                a = cps[k]; b = cps[(k+1) % 4]
+                if a and b:
+                    self.create_line(a[0], a[1], b[0], b[1],
+                                     fill="#7fa8e6", width=1)
+        if pa:
+            self.create_line(pe[0], pe[1], pa[0], pa[1],
+                             fill=TH["accent"], dash=(3, 2), arrow="last")
+        self.create_text(pe[0] + 10, pe[1] - 12, text="Camera",
+                         fill=TH["accent_hi"], font=("Segoe UI", 8, "bold"),
+                         anchor="w")
+
+    def _draw_hud(self, w, h):
+        # top-left view label
+        view = "Perspective" if not self.cam.ortho else "Orthographic"
+        self.create_text(10, 10, anchor="nw",
+                         text=f"{self.label} · {view}",
+                         fill=TH["fg_dim"], font=("Segoe UI", 9, "bold"))
+        # bottom-right axis indicator
+        gx, gy = w - 40, h - 40
+        size = 22
+        ax = self.cam.right()
+        ay = self.cam.up()
+        az = self.cam.forward()
+        # screen-space x = world dot right, screen-space y = -world dot up
+        def s2(v):
+            return (gx + v[0] * size - v[2] * size * 0.0,
+                    gy - v[1] * size + v[2] * size * 0.0)
+        # actually project axis onto camera right/up plane:
+        def proj_axis(axis):
+            sx = v_dot(axis, ax) * size
+            sy = -v_dot(axis, ay) * size
+            return (gx + sx, gy + sy)
+        for axis, col, lbl in (((1,0,0), TH["grid_axis_x"], "X"),
+                                ((0,1,0), TH["grid_axis_y"], "Y"),
+                                ((0,0,1), TH["grid_axis_z"], "Z")):
+            ex, ey = proj_axis(axis)
+            self.create_line(gx, gy, ex, ey, fill=col, width=2)
+            self.create_oval(ex-5, ey-5, ex+5, ey+5,
+                             fill=col, outline="#fff")
+            self.create_text(ex, ey, text=lbl, fill="#fff",
+                             font=("Segoe UI", 7, "bold"))
+
+    # ---------- view shortcuts ----------
+    def set_axis_view(self, key):
+        if key in self.AXIS_VIEWS:
+            _, yaw, pitch, _ = self.AXIS_VIEWS[key]
+            self.cam.yaw = yaw
+            self.cam.pitch = pitch
+            self.request_redraw()
+
+    def toggle_ortho(self):
+        self.cam.ortho = not self.cam.ortho
+        self.request_redraw()
+
+    def frame_selected(self):
+        if self.app.selected_index is None:
+            self.cam.pivot = [0, 1, 0]; self.cam.dist = 14
+        else:
+            s = self.app.scene["spheres"][self.app.selected_index]
+            if s["radius"] < 50:
+                self.cam.frame((s["x"], s["y"], s["z"]), s["radius"])
+            else:
+                self.cam.pivot = [0, 1, 0]; self.cam.dist = 14
+        self.request_redraw()
+
+    def frame_all(self):
+        pts = [(s["x"], s["y"], s["z"], s["radius"])
+               for s in self.app.scene["spheres"] if s["radius"] < 50]
+        if not pts:
+            return
+        cx = sum(p[0] for p in pts) / len(pts)
+        cy = sum(p[1] for p in pts) / len(pts)
+        cz = sum(p[2] for p in pts) / len(pts)
+        # estimate bounding radius
+        br = max(math.hypot(p[0]-cx, math.hypot(p[1]-cy, p[2]-cz)) + p[3]
+                 for p in pts)
+        self.cam.pivot = [cx, cy, cz]
+        self.cam.dist = max(5.0, br * 3.0)
+        self.cam.ortho_size = max(3.0, br * 2.5)
+        self.request_redraw()
+
+    # ---------- color helpers ----------
+    @staticmethod
+    def _clamp_rgb(r, g, b):
+        return (max(0.0, min(1.0, r)),
+                max(0.0, min(1.0, g)),
+                max(0.0, min(1.0, b)))
+
+    @staticmethod
+    def _mul_rgb(c, k):
+        return (c[0] * k, c[1] * k, c[2] * k)
+
+    @staticmethod
+    def _add_rgb(c, k):
+        return (c[0] + k, c[1] + k, c[2] + k)
+
+    @staticmethod
+    def _rgb_hex(r, g, b):
+        r = max(0.0, min(1.0, r)); g = max(0.0, min(1.0, g)); b = max(0.0, min(1.0, b))
+        return "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
+
+    @staticmethod
+    def _lerp_hex(a, b, t):
+        def h(s): return tuple(int(s[i:i+2], 16) for i in (1, 3, 5))
+        ca = h(a); cb = h(b)
+        c = tuple(int(ca[i] + (cb[i] - ca[i]) * t) for i in range(3))
+        return "#{:02x}{:02x}{:02x}".format(*c)
+
+
+# ===========================================================================
+#  Main application
+# ===========================================================================
+class SceneEditor(tk.Tk):
+
+    def __init__(self):
+        super().__init__()
+        self.title("PathTracer++ Scene Editor — 3D")
+        self.geometry("1500x900")
+        self.minsize(1100, 700)
+        self.configure(bg=TH["bg"])
+
+        self._apply_theme()
+
+        self.scene = new_default_scene()
+        self.scene_path = None
+        self.selected_index = 1   # red_ball
+        self._build_ui()
+        self._wire_shortcuts()
+        self._refresh_outliner()
+        self._load_props_into_vars()
+        self._load_camera_into_vars()
+        self.after(60, self._all_views_redraw)
+
+    # ---------- ttk theme ----------
+    def _apply_theme(self):
+        s = ttk.Style(self)
+        try:
+            s.theme_use("clam")
+        except tk.TclError:
+            pass
+        s.configure(".",
+                    background=TH["bg"],
+                    foreground=TH["fg"],
+                    fieldbackground=TH["bg_dark"],
+                    bordercolor=TH["bg_dark"],
+                    lightcolor=TH["bg_panel"],
+                    darkcolor=TH["bg_dark"])
+        s.configure("TFrame",       background=TH["bg"])
+        s.configure("Panel.TFrame", background=TH["bg_panel"])
+        s.configure("Dark.TFrame",  background=TH["bg_dark"])
+        s.configure("Header.TFrame", background=TH["bg_header"])
+        s.configure("TLabel",       background=TH["bg"],       foreground=TH["fg"])
+        s.configure("Panel.TLabel", background=TH["bg_panel"], foreground=TH["fg"])
+        s.configure("Header.TLabel", background=TH["bg_header"], foreground=TH["fg"],
+                    font=("Segoe UI", 9, "bold"))
+        s.configure("Hint.TLabel",  background=TH["bg"], foreground=TH["fg_dim"],
+                    font=("Segoe UI", 8))
+        s.configure("TButton",
+                    background=TH["bg_header"], foreground=TH["fg"],
+                    borderwidth=1, relief="flat",
+                    padding=4)
+        s.map("TButton",
+              background=[("active", TH["accent"]),
+                          ("pressed", TH["accent_hi"])],
+              foreground=[("active", "#fff")])
+        s.configure("Accent.TButton", background=TH["accent"], foreground="#fff")
+        s.map("Accent.TButton",
+              background=[("active", TH["accent_hi"])])
+        s.configure("Tool.TButton", padding=2, font=("Segoe UI", 8))
+        s.configure("TLabelframe", background=TH["bg_panel"],
+                    foreground=TH["fg"], borderwidth=1, relief="solid")
+        s.configure("TLabelframe.Label", background=TH["bg_panel"],
+                    foreground=TH["accent_hi"], font=("Segoe UI", 9, "bold"))
+        s.configure("TCombobox",
+                    fieldbackground=TH["bg_dark"],
+                    background=TH["bg_header"],
+                    foreground=TH["fg"], arrowcolor=TH["fg"])
+        s.configure("TEntry",
+                    fieldbackground=TH["bg_dark"],
+                    foreground=TH["fg"], insertcolor=TH["fg"])
+        s.configure("TNotebook", background=TH["bg_panel"], borderwidth=0)
+        s.configure("TNotebook.Tab",
+                    background=TH["bg_header"], foreground=TH["fg_dim"],
+                    padding=(10, 4), font=("Segoe UI", 9))
+        s.map("TNotebook.Tab",
+              background=[("selected", TH["bg_panel"])],
+              foreground=[("selected", TH["fg"])])
+        s.configure("Vertical.TScrollbar",
+                    background=TH["bg_header"], troughcolor=TH["bg_dark"],
+                    arrowcolor=TH["fg"], bordercolor=TH["bg_dark"])
+
+    # ---------- ui layout ----------
+    def _build_ui(self):
+        # Menu bar
+        self._build_menu()
+
+        # Top toolbar
+        self._build_toolbar()
+
+        # Main: left toolbar | center viewports | right outliner+properties
+        main = ttk.Frame(self)
+        main.pack(fill="both", expand=True)
+
+        # left side toolshelf (Blender-style add menu strip)
+        toolshelf = ttk.Frame(main, style="Dark.TFrame", width=44)
+        toolshelf.pack(side="left", fill="y")
+        toolshelf.pack_propagate(False)
+        self._build_toolshelf(toolshelf)
+
+        # center: viewport area
+        center = ttk.Frame(main, style="Dark.TFrame")
+        center.pack(side="left", fill="both", expand=True)
+        self._build_viewports(center)
+
+        # right: outliner + properties
+        right = ttk.Frame(main, style="Panel.TFrame", width=340)
+        right.pack(side="right", fill="y")
+        right.pack_propagate(False)
+        self._build_right_panel(right)
+
+        # bottom status bar
+        self._build_statusbar()
+
+    def _build_menu(self):
+        m = tk.Menu(self, bg=TH["bg_header"], fg=TH["fg"],
+                    activebackground=TH["accent"], activeforeground="#fff",
+                    borderwidth=0)
+        filem = tk.Menu(m, tearoff=0, bg=TH["bg_panel"], fg=TH["fg"],
+                        activebackground=TH["accent"], activeforeground="#fff")
+        filem.add_command(label="New",          accelerator="Ctrl+N",
+                          command=self.cmd_new)
+        filem.add_command(label="Open…",        accelerator="Ctrl+O",
+                          command=self.cmd_open)
+        filem.add_command(label="Save",         accelerator="Ctrl+S",
+                          command=self.cmd_save)
+        filem.add_command(label="Save As…",     command=self.cmd_save_as)
+        filem.add_separator()
+        filem.add_command(label="Import .scene…", command=self.cmd_import_scene)
+        filem.add_command(label="Export .scene…", command=self.cmd_export_scene)
+        filem.add_separator()
+        filem.add_command(label="Exit",         command=self.destroy)
+        m.add_cascade(label="File", menu=filem)
+
+        addm = tk.Menu(m, tearoff=0, bg=TH["bg_panel"], fg=TH["fg"],
+                       activebackground=TH["accent"], activeforeground="#fff")
+        addm.add_command(label="Sphere (Lambert)", command=self.cmd_add_sphere)
+        addm.add_command(label="Metal Sphere",     command=self.cmd_add_metal)
+        addm.add_command(label="Glass Sphere",     command=self.cmd_add_glass)
+        addm.add_command(label="Light",            command=self.cmd_add_light)
+        m.add_cascade(label="Add", menu=addm)
+
+        viewm = tk.Menu(m, tearoff=0, bg=TH["bg_panel"], fg=TH["fg"],
+                        activebackground=TH["accent"], activeforeground="#fff")
+        viewm.add_command(label="Front  (Numpad 1)",  command=lambda: self.viewport.set_axis_view("1"))
+        viewm.add_command(label="Right  (Numpad 3)",  command=lambda: self.viewport.set_axis_view("3"))
+        viewm.add_command(label="Top    (Numpad 7)",  command=lambda: self.viewport.set_axis_view("7"))
+        viewm.add_separator()
+        viewm.add_command(label="Toggle Ortho/Persp (Numpad 5)",
+                          command=lambda: (self.viewport.toggle_ortho(),
+                                           self._update_status("Toggled view")))
+        viewm.add_command(label="Frame Selected (Numpad .)",
+                          command=lambda: self.viewport.frame_selected())
+        viewm.add_command(label="Frame All (Home)",
+                          command=lambda: self.viewport.frame_all())
+        m.add_cascade(label="View", menu=viewm)
+
+        rendm = tk.Menu(m, tearoff=0, bg=TH["bg_panel"], fg=TH["fg"],
+                        activebackground=TH["accent"], activeforeground="#fff")
+        rendm.add_command(label="Render Image (F12)", command=self.cmd_render)
+        rendm.add_separator()
+        rendm.add_command(label="Preview  (640×360, 16spp)",
+                          command=lambda: self._apply_preset(640, 360, 16, 8))
+        rendm.add_command(label="Balanced (1280×720, 128spp)",
+                          command=lambda: self._apply_preset(1280, 720, 128, 12))
+        rendm.add_command(label="Final    (1920×1080, 256spp)",
+                          command=lambda: self._apply_preset(1920, 1080, 256, 16))
+        m.add_cascade(label="Render", menu=rendm)
+
+        helpm = tk.Menu(m, tearoff=0, bg=TH["bg_panel"], fg=TH["fg"],
+                        activebackground=TH["accent"], activeforeground="#fff")
+        helpm.add_command(label="Shortcuts…", command=self._show_shortcuts)
+        helpm.add_command(label="About…",     command=self._show_about)
+        m.add_cascade(label="Help", menu=helpm)
+
+        self.config(menu=m)
+
+    def _build_toolbar(self):
+        bar = ttk.Frame(self, style="Header.TFrame")
+        bar.pack(side="top", fill="x")
+
+        # right-aligned render button (pack first so it always stays on the right)
+        self.btn_render = ttk.Button(bar, text="▶  RENDER  (F12)",
+                                     command=self.cmd_render,
+                                     style="Accent.TButton")
+        self.btn_render.pack(side="right", padx=6, pady=3)
+
+        def tb(text, cmd, accent=False):
+            style = "Accent.TButton" if accent else "TButton"
+            b = ttk.Button(bar, text=text, command=cmd, style=style)
+            b.pack(side="left", padx=1, pady=3)
+            return b
+        tb("New",      self.cmd_new)
+        tb("Open",     self.cmd_open)
+        tb("Save",     self.cmd_save)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=4, pady=4)
+        tb("+ Sphere", self.cmd_add_sphere)
+        tb("+ Metal",  self.cmd_add_metal)
+        tb("+ Glass",  self.cmd_add_glass)
+        tb("+ Light",  self.cmd_add_light)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=4, pady=4)
+        tb("Duplicate", self.cmd_duplicate)
+        tb("Delete",    self.cmd_delete)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=4, pady=4)
+        tb("Front", lambda: self.viewport.set_axis_view("1"))
+        tb("Side",  lambda: self.viewport.set_axis_view("3"))
+        tb("Top",   lambda: self.viewport.set_axis_view("7"))
+        tb("Ortho", lambda: self.viewport.toggle_ortho())
+        tb("Frame", lambda: self.viewport.frame_all())
+
+    def _build_toolshelf(self, parent):
+        def b(symbol, tip, cmd):
+            btn = tk.Button(parent, text=symbol, command=cmd,
+                            bg=TH["bg_header"], fg=TH["fg"], bd=0,
+                            activebackground=TH["accent"], activeforeground="#fff",
+                            font=("Segoe UI", 14), width=2, pady=4)
+            btn.pack(pady=2, padx=4)
+            self._add_tooltip(btn, tip)
+            return btn
+        b("●", "Add Lambert sphere",   self.cmd_add_sphere)
+        b("◆", "Add Metal sphere",     self.cmd_add_metal)
+        b("○", "Add Glass sphere",     self.cmd_add_glass)
+        b("✦", "Add Light",            self.cmd_add_light)
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=8, padx=4)
+        b("⧉", "Duplicate selected",   self.cmd_duplicate)
+        b("✕", "Delete selected",      self.cmd_delete)
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=8, padx=4)
+        b("⌖", "Frame selected",       lambda: self.viewport.frame_selected())
+        b("⛶", "Frame all",            lambda: self.viewport.frame_all())
+
+    def _build_viewports(self, parent):
+        # 1 big perspective + 3 small orthos (Blender-quad-view inspired)
+        grid = ttk.Frame(parent, style="Dark.TFrame")
+        grid.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # configure grid: row 0 = big (2x weight), row 1 = small ortho strip
+        grid.rowconfigure(0, weight=4)
+        grid.rowconfigure(1, weight=1)
+        grid.columnconfigure(0, weight=1)
+        grid.columnconfigure(1, weight=1)
+        grid.columnconfigure(2, weight=1)
+
+        # big perspective view spans all 3 columns
+        persp_holder = ttk.Frame(grid, style="Dark.TFrame")
+        persp_holder.grid(row=0, column=0, columnspan=3, sticky="nsew", padx=1, pady=1)
+        self.viewport = self._mk_viewport_in(persp_holder, "User Persp", persp=True)
+
+        # ortho strip
+        top_holder = ttk.Frame(grid, style="Dark.TFrame")
+        top_holder.grid(row=1, column=0, sticky="nsew", padx=1, pady=1)
+        self.view_top = self._mk_viewport_in(top_holder, "Top", axis="7", ortho=True)
+
+        front_holder = ttk.Frame(grid, style="Dark.TFrame")
+        front_holder.grid(row=1, column=1, sticky="nsew", padx=1, pady=1)
+        self.view_front = self._mk_viewport_in(front_holder, "Front", axis="1", ortho=True)
+
+        side_holder = ttk.Frame(grid, style="Dark.TFrame")
+        side_holder.grid(row=1, column=2, sticky="nsew", padx=1, pady=1)
+        self.view_side = self._mk_viewport_in(side_holder, "Side", axis="3", ortho=True)
+
+        self.viewports = [self.viewport, self.view_top, self.view_front, self.view_side]
+
+    def _mk_viewport_in(self, holder, name, axis=None, persp=False, ortho=False):
+        header = ttk.Frame(holder, style="Header.TFrame")
+        header.pack(fill="x")
+        ttk.Label(header, text=" " + name, style="Header.TLabel").pack(side="left")
+        vp = Viewport3D(holder, self, label=name)
+        vp.pack(fill="both", expand=True)
+        if axis:
+            vp.set_axis_view(axis)
+        if ortho:
+            vp.cam.ortho = True
+            vp.cam.ortho_size = 8.0
+        return vp
+
+    def _build_right_panel(self, parent):
+        # Outliner at top — give it real height
+        outliner_frame = ttk.LabelFrame(parent, text="Outliner")
+        outliner_frame.pack(fill="both", expand=False, padx=6, pady=6,
+                            ipady=4)
+
+        list_holder = ttk.Frame(outliner_frame, style="Panel.TFrame")
+        list_holder.pack(fill="both", expand=True, padx=2, pady=2)
+        scrollbar = ttk.Scrollbar(list_holder, orient="vertical")
+        self.outliner = tk.Listbox(list_holder, height=12,
+                                   bg=TH["bg_dark"], fg=TH["fg"],
+                                   selectbackground=TH["accent"],
+                                   selectforeground="#fff",
+                                   highlightthickness=0, borderwidth=0,
+                                   activestyle="none",
+                                   font=("Consolas", 10))
+        self.outliner.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        scrollbar.config(command=self.outliner.yview)
+        self.outliner.config(yscrollcommand=scrollbar.set)
+        self.outliner.bind("<<ListboxSelect>>", self._on_outliner_select)
+
+        # Properties notebook
+        nb = ttk.Notebook(parent)
+        nb.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        self.notebook = nb
+
+        # Object tab
+        obj_tab = ttk.Frame(nb, style="Panel.TFrame")
+        nb.add(obj_tab, text="Object")
+        self._build_object_tab(obj_tab)
+
+        # Material tab
+        mat_tab = ttk.Frame(nb, style="Panel.TFrame")
+        nb.add(mat_tab, text="Material")
+        self._build_material_tab(mat_tab)
+
+        # World tab
+        world_tab = ttk.Frame(nb, style="Panel.TFrame")
+        nb.add(world_tab, text="World")
+        self._build_world_tab(world_tab)
+
+        # Render tab
+        render_tab = ttk.Frame(nb, style="Panel.TFrame")
+        nb.add(render_tab, text="Render")
+        self._build_render_tab(render_tab)
+
+    # ===== object tab =====
+    def _build_object_tab(self, parent):
+        self.var_name   = tk.StringVar()
+        self.var_x      = tk.DoubleVar()
+        self.var_y      = tk.DoubleVar()
+        self.var_z      = tk.DoubleVar()
+        self.var_radius = tk.DoubleVar()
+
+        f = ttk.Frame(parent, style="Panel.TFrame")
+        f.pack(fill="x", padx=6, pady=6)
+
+        ttk.Label(f, text="Name", style="Panel.TLabel").grid(row=0, column=0, sticky="e", padx=4, pady=3)
+        e = ttk.Entry(f, textvariable=self.var_name, width=22)
+        e.grid(row=0, column=1, columnspan=3, sticky="we", pady=3)
+        e.bind("<KeyRelease>", lambda _e: self._on_prop_change())
+
+        ttk.Label(f, text="Transform", style="Panel.TLabel",
+                  foreground=TH["accent_hi"]).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 2), padx=4)
+        for i, (lbl, var, col) in enumerate((
+                ("X", self.var_x, TH["grid_axis_x"]),
+                ("Y", self.var_y, TH["grid_axis_y"]),
+                ("Z", self.var_z, TH["grid_axis_z"]))):
+            ttk.Label(f, text=lbl, foreground=col, background=TH["bg_panel"],
+                      font=("Segoe UI", 9, "bold")).grid(row=2 + i, column=0, sticky="e", padx=4)
+            sp = tk.Spinbox(f, textvariable=var, from_=-1000, to=1000,
+                            increment=0.1, width=10,
+                            bg=TH["bg_dark"], fg=TH["fg"],
+                            buttonbackground=TH["bg_header"],
+                            insertbackground=TH["fg"],
+                            command=self._on_prop_change)
+            sp.grid(row=2 + i, column=1, sticky="we", pady=1)
+            sp.bind("<FocusOut>", lambda e: self._on_prop_change())
+            sp.bind("<Return>",   lambda e: self._on_prop_change())
+
+        ttk.Label(f, text="Radius", style="Panel.TLabel",
+                  foreground=TH["accent_hi"]).grid(row=5, column=0, sticky="e", padx=4, pady=(8, 2))
+        sp = tk.Spinbox(f, textvariable=self.var_radius, from_=0.01, to=2000,
+                        increment=0.05, width=10,
+                        bg=TH["bg_dark"], fg=TH["fg"],
+                        buttonbackground=TH["bg_header"],
+                        insertbackground=TH["fg"],
+                        command=self._on_prop_change)
+        sp.grid(row=5, column=1, sticky="we", pady=(8, 2))
+        sp.bind("<FocusOut>", lambda e: self._on_prop_change())
+        sp.bind("<Return>",   lambda e: self._on_prop_change())
+
+        f.columnconfigure(1, weight=1)
+        f.columnconfigure(2, weight=1)
+        f.columnconfigure(3, weight=1)
+
+        actions = ttk.Frame(parent, style="Panel.TFrame")
+        actions.pack(fill="x", padx=6, pady=4)
+        ttk.Button(actions, text="Duplicate", command=self.cmd_duplicate).pack(side="left", padx=2)
+        ttk.Button(actions, text="Delete",    command=self.cmd_delete).pack(side="left", padx=2)
+        ttk.Button(actions, text="Center on Origin",
+                   command=self._center_selected).pack(side="left", padx=2)
+
+    def _center_selected(self):
+        if self.selected_index is None: return
+        s = self.scene["spheres"][self.selected_index]
+        s["x"] = 0.0; s["z"] = 0.0
+        self._load_props_into_vars()
+        self.on_selected_transformed()
+
+    # ===== material tab =====
+    def _build_material_tab(self, parent):
+        self.var_mat    = tk.StringVar(value="lambert")
+        self.var_r      = tk.DoubleVar()
+        self.var_g      = tk.DoubleVar()
+        self.var_b      = tk.DoubleVar()
+        self.var_fuzz   = tk.DoubleVar()
+        self.var_ir     = tk.DoubleVar()
+
+        f = ttk.Frame(parent, style="Panel.TFrame")
+        f.pack(fill="x", padx=6, pady=6)
+
+        ttk.Label(f, text="Type", style="Panel.TLabel").grid(row=0, column=0, sticky="e", padx=4, pady=4)
+        cb = ttk.Combobox(f, textvariable=self.var_mat, values=MATERIALS,
+                          state="readonly", width=18)
+        cb.grid(row=0, column=1, columnspan=2, sticky="we", pady=4)
+        cb.bind("<<ComboboxSelected>>", lambda _e: self._on_material_change())
+
+        # color preview swatch
+        self.color_swatch = tk.Frame(f, width=80, height=22, bg="#ffffff",
+                                     highlightthickness=1, highlightbackground=TH["bg_dark"])
+        self.color_swatch.grid(row=1, column=0, columnspan=3, padx=4, pady=4, sticky="we")
+        self.color_swatch.bind("<Button-1>", lambda _e: self._on_pick_color())
+
+        ttk.Button(f, text="Pick Color…", command=self._on_pick_color)\
+            .grid(row=2, column=0, columnspan=3, sticky="we", padx=4, pady=2)
+
+        for i, (lbl, var, col) in enumerate((
+                ("R", self.var_r, "#d65454"),
+                ("G", self.var_g, "#54c45a"),
+                ("B", self.var_b, "#5a8fd6"))):
+            ttk.Label(f, text=lbl, foreground=col, background=TH["bg_panel"],
+                      font=("Segoe UI", 9, "bold")).grid(row=3 + i, column=0, sticky="e", padx=4)
+            sp = tk.Spinbox(f, textvariable=var, from_=0, to=50, increment=0.05,
+                            width=10,
+                            bg=TH["bg_dark"], fg=TH["fg"],
+                            buttonbackground=TH["bg_header"],
+                            insertbackground=TH["fg"],
+                            command=self._on_prop_change)
+            sp.grid(row=3 + i, column=1, sticky="we", pady=1)
+            sp.bind("<FocusOut>", lambda _e: self._on_prop_change())
+            sp.bind("<Return>",   lambda _e: self._on_prop_change())
+
+        ttk.Label(f, text="Roughness (metal)", style="Panel.TLabel")\
+            .grid(row=6, column=0, sticky="e", padx=4, pady=(8, 2))
+        sp = tk.Spinbox(f, textvariable=self.var_fuzz, from_=0, to=1, increment=0.01,
+                        width=10,
+                        bg=TH["bg_dark"], fg=TH["fg"],
+                        buttonbackground=TH["bg_header"],
+                        insertbackground=TH["fg"],
+                        command=self._on_prop_change)
+        sp.grid(row=6, column=1, sticky="we", pady=(8, 2))
+        sp.bind("<FocusOut>", lambda _e: self._on_prop_change())
+        sp.bind("<Return>",   lambda _e: self._on_prop_change())
+
+        ttk.Label(f, text="IOR (glass)", style="Panel.TLabel")\
+            .grid(row=7, column=0, sticky="e", padx=4, pady=2)
+        sp = tk.Spinbox(f, textvariable=self.var_ir, from_=1.0, to=3.0, increment=0.01,
+                        width=10,
+                        bg=TH["bg_dark"], fg=TH["fg"],
+                        buttonbackground=TH["bg_header"],
+                        insertbackground=TH["fg"],
+                        command=self._on_prop_change)
+        sp.grid(row=7, column=1, sticky="we", pady=2)
+        sp.bind("<FocusOut>", lambda _e: self._on_prop_change())
+        sp.bind("<Return>",   lambda _e: self._on_prop_change())
+
+        f.columnconfigure(1, weight=1)
+        f.columnconfigure(2, weight=1)
+
+        # Material presets
+        pres = ttk.LabelFrame(parent, text="Quick Presets")
+        pres.pack(fill="x", padx=6, pady=6)
+        pgrid = ttk.Frame(pres, style="Panel.TFrame")
+        pgrid.pack(fill="x", padx=4, pady=4)
+        presets = [
+            ("Red",     "lambert",   0.75, 0.30, 0.25, 0.0, 1.5),
+            ("Green",   "lambert",   0.25, 0.65, 0.30, 0.0, 1.5),
+            ("Blue",    "lambert",   0.20, 0.30, 0.75, 0.0, 1.5),
+            ("Gold",    "metal",     0.88, 0.72, 0.28, 0.03, 1.5),
+            ("Chrome",  "metal",     0.85, 0.85, 0.88, 0.0, 1.5),
+            ("Copper",  "metal",     0.85, 0.55, 0.42, 0.08, 1.5),
+            ("Glass",   "dielectric",1.0,  1.0,  1.0,  0.0, 1.5),
+            ("Diamond", "dielectric",1.0,  1.0,  1.0,  0.0, 2.4),
+            ("Warm Light", "light",  9.0,  7.5,  5.5,  0.0, 1.5),
+            ("Cool Light", "light",  6.0,  7.5,  10.0, 0.0, 1.5),
+        ]
+        for i, p in enumerate(presets):
+            btn = ttk.Button(pgrid, text=p[0],
+                             command=lambda pp=p: self._apply_material_preset(pp))
+            btn.grid(row=i // 2, column=i % 2, sticky="we", padx=2, pady=2)
+            pgrid.columnconfigure(i % 2, weight=1)
+
+    def _apply_material_preset(self, p):
+        if self.selected_index is None:
+            return
+        s = self.scene["spheres"][self.selected_index]
+        _, mat, r, g, b, fz, ir = p
+        s["material"] = mat
+        s["r"] = r; s["g"] = g; s["b"] = b
+        s["fuzz"] = fz; s["ir"] = ir
+        self._load_props_into_vars()
+        self.on_selected_transformed()
+
+    # ===== world tab =====
+    def _build_world_tab(self, parent):
+        self.cam_vars = {
+            "lf_x": tk.DoubleVar(), "lf_y": tk.DoubleVar(), "lf_z": tk.DoubleVar(),
+            "la_x": tk.DoubleVar(), "la_y": tk.DoubleVar(), "la_z": tk.DoubleVar(),
+            "vfov": tk.DoubleVar(), "aperture": tk.DoubleVar(), "focus": tk.DoubleVar(),
+        }
+        self.var_sky = tk.StringVar(value="blue")
+
+        cam = ttk.LabelFrame(parent, text="Camera")
+        cam.pack(fill="x", padx=6, pady=6)
+
+        def xyz_row(row, label, kx, ky, kz):
+            ttk.Label(cam, text=label, style="Panel.TLabel")\
+                .grid(row=row, column=0, sticky="e", padx=4, pady=2)
+            grp = ttk.Frame(cam, style="Panel.TFrame")
+            grp.grid(row=row, column=1, sticky="we")
+            for k, color in ((kx, TH["grid_axis_x"]),
+                             (ky, TH["grid_axis_y"]),
+                             (kz, TH["grid_axis_z"])):
+                ttk.Label(grp, text="◆", foreground=color,
+                          background=TH["bg_panel"]).pack(side="left")
+                sp = tk.Spinbox(grp, textvariable=self.cam_vars[k],
+                                from_=-1000, to=1000, increment=0.1,
+                                width=6,
+                                bg=TH["bg_dark"], fg=TH["fg"],
+                                buttonbackground=TH["bg_header"],
+                                insertbackground=TH["fg"],
+                                command=self._on_cam_change)
+                sp.pack(side="left", padx=(0, 4))
+                sp.bind("<FocusOut>", lambda _e: self._on_cam_change())
+                sp.bind("<Return>",   lambda _e: self._on_cam_change())
+
+        xyz_row(0, "Position",  "lf_x", "lf_y", "lf_z")
+        xyz_row(1, "Target",    "la_x", "la_y", "la_z")
+
+        for row, (label, key, lo, hi, step) in enumerate(
+                (("FoV°",     "vfov", 1, 170, 0.5),
+                 ("Aperture", "aperture", 0, 5, 0.005),
+                 ("Focus",    "focus", 0, 500, 0.1)), start=2):
+            ttk.Label(cam, text=label, style="Panel.TLabel")\
+                .grid(row=row, column=0, sticky="e", padx=4, pady=2)
+            sp = tk.Spinbox(cam, textvariable=self.cam_vars[key],
+                            from_=lo, to=hi, increment=step,
+                            width=10,
+                            bg=TH["bg_dark"], fg=TH["fg"],
+                            buttonbackground=TH["bg_header"],
+                            insertbackground=TH["fg"],
+                            command=self._on_cam_change)
+            sp.grid(row=row, column=1, sticky="w", pady=1)
+            sp.bind("<FocusOut>", lambda _e: self._on_cam_change())
+            sp.bind("<Return>",   lambda _e: self._on_cam_change())
+
+        ttk.Button(cam, text="Align Camera to Viewport",
+                   command=self._align_cam_to_view)\
+            .grid(row=5, column=0, columnspan=2, sticky="we", padx=4, pady=(6, 4))
+
+        world = ttk.LabelFrame(parent, text="World / Sky")
+        world.pack(fill="x", padx=6, pady=6)
+        ttk.Label(world, text="Background", style="Panel.TLabel")\
+            .grid(row=0, column=0, sticky="e", padx=4, pady=4)
+        cb = ttk.Combobox(world, textvariable=self.var_sky, values=SKY_MODES,
+                          state="readonly", width=14)
+        cb.grid(row=0, column=1, sticky="w", pady=4)
+        cb.bind("<<ComboboxSelected>>", lambda _e: self._on_cam_change())
+
+    def _align_cam_to_view(self):
+        eye = self.viewport.cam.eye()
+        target = tuple(self.viewport.cam.pivot)
+        self.scene["camera"]["lookfrom"] = list(eye)
+        self.scene["camera"]["lookat"] = list(target)
+        self._load_camera_into_vars()
+        self._all_views_redraw()
+        self._update_status("Aligned scene camera to current viewport.")
+
+    # ===== render tab =====
+    def _build_render_tab(self, parent):
+        self.rend_vars = {k: tk.StringVar(value=str(v))
+                          for k, v in self.scene["render"].items()}
+
+        f = ttk.LabelFrame(parent, text="Output")
+        f.pack(fill="x", padx=6, pady=6)
+
+        def add(row, label, key, width=14):
+            ttk.Label(f, text=label, style="Panel.TLabel")\
+                .grid(row=row, column=0, sticky="e", padx=4, pady=2)
+            ttk.Entry(f, textvariable=self.rend_vars[key], width=width)\
+                .grid(row=row, column=1, sticky="we", pady=2)
+
+        add(0, "Width",        "width",   width=10)
+        add(1, "Height",       "height",  width=10)
+        add(2, "Samples / px", "spp",     width=10)
+        add(3, "Max depth",    "depth",   width=10)
+        add(4, "Threads",      "threads", width=10)
+        add(5, "Seed",         "seed",    width=10)
+        add(6, "Output file",  "output",  width=22)
+        add(7, "Pathtracer",   "exe",     width=22)
+        ttk.Button(f, text="…", width=3, command=self._browse_exe)\
+            .grid(row=7, column=2, padx=2)
+
+        f.columnconfigure(1, weight=1)
+
+        pres = ttk.LabelFrame(parent, text="Quality Presets")
+        pres.pack(fill="x", padx=6, pady=6)
+        for i, (label, args) in enumerate((
+                ("Preview  · 640×360 · 16spp",   (640, 360, 16, 8)),
+                ("Balanced · 1280×720 · 128spp", (1280, 720, 128, 12)),
+                ("Final    · 1920×1080 · 256spp", (1920, 1080, 256, 16)),
+                ("Ultra    · 3840×2160 · 512spp", (3840, 2160, 512, 24)))):
+            ttk.Button(pres, text=label,
+                       command=lambda a=args: self._apply_preset(*a))\
+                .pack(fill="x", padx=4, pady=2)
+
+        big = tk.Button(parent, text="▶  RENDER",
+                        bg=TH["accent"], fg="#fff",
+                        activebackground=TH["accent_hi"],
+                        font=("Segoe UI", 13, "bold"),
+                        bd=0, height=2, command=self.cmd_render)
+        big.pack(fill="x", padx=6, pady=8)
+        self.btn_render_big = big
+
+        self.render_status = tk.Label(parent, text="Ready.",
+                                      bg=TH["bg_panel"], fg=TH["ok"],
+                                      anchor="w",
+                                      font=("Segoe UI", 9))
+        self.render_status.pack(fill="x", padx=8)
+
+    def _build_statusbar(self):
+        bar = tk.Frame(self, bg=TH["bg_header"], height=22)
+        bar.pack(side="bottom", fill="x")
+        self.status_var = tk.StringVar(value="Ready. MMB drag: orbit · Shift+MMB: pan · Wheel: zoom · Numpad 1/3/7: views · F12: render")
+        tk.Label(bar, textvariable=self.status_var, bg=TH["bg_header"],
+                 fg=TH["fg_dim"], anchor="w",
+                 font=("Segoe UI", 9)).pack(side="left", fill="x", expand=True, padx=8)
+        self.info_var = tk.StringVar(value="")
+        tk.Label(bar, textvariable=self.info_var, bg=TH["bg_header"],
+                 fg=TH["fg"], anchor="e",
+                 font=("Consolas", 9)).pack(side="right", padx=8)
+
+    def _update_status(self, msg):
+        self.status_var.set(msg)
+
+    # ---------- tooltips ----------
+    def _add_tooltip(self, widget, text):
+        def show(_):
+            x = widget.winfo_rootx() + widget.winfo_width() + 6
+            y = widget.winfo_rooty() + 4
+            tip = tk.Toplevel(widget); tip.wm_overrideredirect(True)
+            tip.wm_geometry(f"+{x}+{y}")
+            tk.Label(tip, text=text, bg="#ffffe0", fg="#000",
+                     font=("Segoe UI", 9), bd=1, relief="solid",
+                     padx=6, pady=2).pack()
+            widget._tip = tip
+        def hide(_):
+            t = getattr(widget, "_tip", None)
+            if t:
+                try: t.destroy()
+                except tk.TclError: pass
+                widget._tip = None
+        widget.bind("<Enter>", show)
+        widget.bind("<Leave>", hide)
+
+    # ---------- shortcuts ----------
+    def _wire_shortcuts(self):
+        self.bind_all("<Control-n>", lambda e: self.cmd_new())
+        self.bind_all("<Control-o>", lambda e: self.cmd_open())
+        self.bind_all("<Control-s>", lambda e: self.cmd_save())
+        self.bind_all("<F12>",       lambda e: self.cmd_render())
+
+        self.bind_all("<KeyPress-1>",  self._kp_view)
+        self.bind_all("<KeyPress-3>",  self._kp_view)
+        self.bind_all("<KeyPress-7>",  self._kp_view)
+        self.bind_all("<KeyPress-5>",  self._kp_view)
+        self.bind_all("<KeyPress-period>", self._kp_view)
+        self.bind_all("<KeyPress-Home>",  lambda e: self.viewport.frame_all())
+
+        self.bind_all("<Delete>",     lambda e: self.cmd_delete())
+        self.bind_all("<KeyPress-x>", self._maybe_delete)
+        self.bind_all("<KeyPress-X>", self._maybe_delete)
+
+        self.bind_all("<Shift-D>",    lambda e: self.cmd_duplicate())
+        self.bind_all("<KeyPress-a>", self._add_popup)
+        self.bind_all("<KeyPress-A>", self._add_popup)
+
+    def _maybe_delete(self, _e):
+        # Avoid eating x in text fields
+        focus = self.focus_get()
+        if isinstance(focus, (tk.Entry, ttk.Entry, tk.Spinbox, tk.Text)):
+            return
+        self.cmd_delete()
+
+    def _kp_view(self, evt):
+        focus = self.focus_get()
+        if isinstance(focus, (tk.Entry, ttk.Entry, tk.Spinbox, tk.Text)):
+            return
+        if evt.keysym == "1":
+            self.viewport.set_axis_view("1")
+        elif evt.keysym == "3":
+            self.viewport.set_axis_view("3")
+        elif evt.keysym == "7":
+            self.viewport.set_axis_view("7")
+        elif evt.keysym == "5":
+            self.viewport.toggle_ortho()
+        elif evt.keysym == "period":
+            self.viewport.frame_selected()
+
+    def _add_popup(self, _e):
+        focus = self.focus_get()
+        if isinstance(focus, (tk.Entry, ttk.Entry, tk.Spinbox, tk.Text)):
+            return
+        m = tk.Menu(self, tearoff=0, bg=TH["bg_panel"], fg=TH["fg"],
+                    activebackground=TH["accent"], activeforeground="#fff")
+        m.add_command(label="Sphere (Lambert)", command=self.cmd_add_sphere)
+        m.add_command(label="Metal Sphere",     command=self.cmd_add_metal)
+        m.add_command(label="Glass Sphere",     command=self.cmd_add_glass)
+        m.add_command(label="Light",            command=self.cmd_add_light)
+        x = self.winfo_pointerx(); y = self.winfo_pointery()
+        m.tk_popup(x, y)
+
+    # ---------- file commands ----------
+    def cmd_new(self):
+        if not messagebox.askyesno("New Scene", "Discard current scene?"):
+            return
+        self.scene = new_default_scene()
+        self.scene_path = None
+        self.selected_index = 1
+        self._refresh_all()
+
+    def cmd_open(self):
+        p = filedialog.askopenfilename(filetypes=[("Scene JSON", "*.json"), ("All", "*.*")])
+        if not p: return
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                self.scene = json.load(f)
+            # backfill missing fields
+            self.scene.setdefault("render", new_default_scene()["render"])
+        except Exception as e:
+            messagebox.showerror("Open failed", str(e))
+            return
+        self.scene_path = p
+        self.selected_index = None
+        self._refresh_all()
+        self._update_status(f"Opened {p}")
+
+    def cmd_save(self):
+        if not self.scene_path:
+            return self.cmd_save_as()
+        self._sync_render_vars_into_scene()
+        try:
+            with open(self.scene_path, "w", encoding="utf-8") as f:
+                json.dump(self.scene, f, indent=2)
+            self._update_status(f"Saved {self.scene_path}")
+        except Exception as e:
+            messagebox.showerror("Save failed", str(e))
+
+    def cmd_save_as(self):
+        p = filedialog.asksaveasfilename(defaultextension=".json",
+                                         filetypes=[("Scene JSON", "*.json")])
+        if not p: return
+        self.scene_path = p
+        self.cmd_save()
+
+    def cmd_export_scene(self):
+        p = filedialog.asksaveasfilename(defaultextension=".scene",
+                                         filetypes=[("Scene text", "*.scene")])
+        if not p: return
+        try:
+            write_scene_file(self.scene, p)
+            self._update_status(f"Exported {p}")
+        except Exception as e:
+            messagebox.showerror("Export failed", str(e))
+
+    def cmd_import_scene(self):
+        p = filedialog.askopenfilename(filetypes=[("Scene text", "*.scene"), ("All", "*.*")])
+        if not p: return
+        try:
+            self.scene = self._parse_scene_file(p)
+            self.scene_path = None
+            self.selected_index = None
+            self._refresh_all()
+            self._update_status(f"Imported {p}")
+        except Exception as e:
+            messagebox.showerror("Import failed", str(e))
+
+    def _parse_scene_file(self, path):
+        scene = new_default_scene()
+        scene["spheres"] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                ln = line.strip()
+                if not ln or ln.startswith("#"): continue
+                parts = ln.split()
+                if parts[0] == "sky" and len(parts) >= 2:
+                    scene["sky"] = parts[1]
+                elif parts[0] == "camera" and len(parts) >= 3:
+                    key = parts[1]
+                    nums = [float(x) for x in parts[2:]]
+                    if key == "lookfrom" and len(nums) >= 3:
+                        scene["camera"]["lookfrom"] = nums[:3]
+                    elif key == "lookat" and len(nums) >= 3:
+                        scene["camera"]["lookat"] = nums[:3]
+                    elif key == "vup" and len(nums) >= 3:
+                        scene["camera"]["vup"] = nums[:3]
+                    elif key == "vfov" and nums:
+                        scene["camera"]["vfov"] = nums[0]
+                    elif key == "aperture" and nums:
+                        scene["camera"]["aperture"] = nums[0]
+                    elif key == "focus" and nums:
+                        scene["camera"]["focus"] = nums[0]
+                elif parts[0] == "sphere" and len(parts) >= 6:
+                    mat = parts[1]
+                    n = [float(x) for x in parts[2:]]
+                    sp = {"x": n[0], "y": n[1], "z": n[2],
+                          "radius": n[3], "material": mat,
+                          "name": f"{mat}_{len(scene['spheres'])}",
+                          **DEFAULT_MATERIAL[mat]}
+                    if mat == "lambert" and len(n) >= 7:
+                        sp["r"], sp["g"], sp["b"] = n[4], n[5], n[6]
+                    elif mat == "metal" and len(n) >= 8:
+                        sp["r"], sp["g"], sp["b"], sp["fuzz"] = n[4], n[5], n[6], n[7]
+                    elif mat == "dielectric" and len(n) >= 5:
+                        sp["ir"] = n[4]
+                    elif mat == "light" and len(n) >= 7:
+                        sp["r"], sp["g"], sp["b"] = n[4], n[5], n[6]
+                    scene["spheres"].append(sp)
+        return scene
+
+    # ---------- add / edit ----------
+    def cmd_add_sphere(self):
+        self._add(new_sphere(0, 1, 0, 1.0, "lambert", "sphere"))
+    def cmd_add_metal(self):
+        self._add(new_sphere(0, 1, 0, 1.0, "metal", "metal"))
+    def cmd_add_glass(self):
+        self._add(new_sphere(0, 1, 0, 1.0, "dielectric", "glass"))
+    def cmd_add_light(self):
+        self._add(new_sphere(0, 5, 0, 1.0, "light", "light"))
+
+    def _add(self, sp):
+        # Make name unique
+        names = {s.get("name", "") for s in self.scene["spheres"]}
+        base = sp["name"]; n = 1; name = base
+        while name in names:
+            n += 1; name = f"{base}.{n:03d}"
+        sp["name"] = name
+        self.scene["spheres"].append(sp)
+        self.selected_index = len(self.scene["spheres"]) - 1
+        self._refresh_outliner()
+        self._load_props_into_vars()
+        self._all_views_redraw()
+        self._update_status(f"Added {sp['material']} '{name}'")
+
+    def cmd_delete(self):
+        if self.selected_index is None: return
+        if self.scene["spheres"][self.selected_index]["radius"] > 50:
+            return
+        name = self.scene["spheres"][self.selected_index].get("name", "?")
+        del self.scene["spheres"][self.selected_index]
+        self.selected_index = None
+        self._refresh_outliner()
+        self._load_props_into_vars()
+        self._all_views_redraw()
+        self._update_status(f"Deleted '{name}'")
+
+    def cmd_duplicate(self):
+        if self.selected_index is None: return
+        s = dict(self.scene["spheres"][self.selected_index])
+        if s["radius"] > 50: return
+        s["x"] += 0.5; s["z"] += 0.5
+        s["name"] = (s.get("name", "sphere")) + "_copy"
+        names = {sp.get("name", "") for sp in self.scene["spheres"]}
+        base = s["name"]; n = 1; name = base
+        while name in names:
+            n += 1; name = f"{base}.{n:03d}"
+        s["name"] = name
+        self.scene["spheres"].append(s)
+        self.selected_index = len(self.scene["spheres"]) - 1
+        self._refresh_outliner()
+        self._load_props_into_vars()
+        self._all_views_redraw()
+        self._update_status(f"Duplicated '{s['name']}'")
+
+    # ---------- selection ----------
+    def set_selection(self, idx):
+        self.selected_index = idx
+        self._load_props_into_vars()
+        self._refresh_outliner_selection()
+        self._all_views_redraw()
+        self._update_info_for_selection()
+
+    def on_selected_transformed(self):
+        if self.selected_index is None: return
+        s = self.scene["spheres"][self.selected_index]
+        self.var_x.set(round(s["x"], 4))
+        self.var_y.set(round(s["y"], 4))
+        self.var_z.set(round(s["z"], 4))
+        self.var_radius.set(round(s["radius"], 4))
+        self._refresh_outliner_only_labels()
+        self._all_views_redraw()
+        self._update_info_for_selection()
+
+    def _update_info_for_selection(self):
+        if self.selected_index is None:
+            self.info_var.set("")
+            return
+        s = self.scene["spheres"][self.selected_index]
+        self.info_var.set(
+            f"{s.get('name','?'):<14} | {s['material']:<10} | "
+            f"({s['x']:+.2f}, {s['y']:+.2f}, {s['z']:+.2f}) "
+            f"r={s['radius']:.2f}")
+
+    # ---------- prop callbacks ----------
+    def _on_outliner_select(self, _e):
+        sel = self.outliner.curselection()
+        if not sel:
+            self.selected_index = None
+        else:
+            self.selected_index = sel[0]
+        self._load_props_into_vars()
+        self._all_views_redraw()
+        self._update_info_for_selection()
+
+    def _on_material_change(self):
+        if self.selected_index is None: return
+        s = self.scene["spheres"][self.selected_index]
+        new_m = self.var_mat.get()
+        if new_m != s["material"]:
+            s.update(DEFAULT_MATERIAL[new_m])
+            s["material"] = new_m
+            self._load_props_into_vars()
+        self._refresh_outliner_only_labels()
+        self._all_views_redraw()
+
+    def _on_prop_change(self):
+        if self.selected_index is None: return
+        s = self.scene["spheres"][self.selected_index]
+        try:
+            s["name"]   = self.var_name.get() or "sphere"
+            s["x"]      = float(self.var_x.get())
+            s["y"]      = float(self.var_y.get())
+            s["z"]      = float(self.var_z.get())
+            s["radius"] = max(0.001, float(self.var_radius.get()))
+            s["r"]      = float(self.var_r.get())
+            s["g"]      = float(self.var_g.get())
+            s["b"]      = float(self.var_b.get())
+            s["fuzz"]   = float(self.var_fuzz.get())
+            s["ir"]     = float(self.var_ir.get())
+        except (ValueError, tk.TclError):
+            return
+        self._update_color_swatch()
+        self._refresh_outliner_only_labels()
+        self._all_views_redraw()
+        self._update_info_for_selection()
+
+    def _on_pick_color(self):
+        if self.selected_index is None: return
+        s = self.scene["spheres"][self.selected_index]
+        init = "#{:02x}{:02x}{:02x}".format(
+            int(min(s["r"], 1) * 255),
+            int(min(s["g"], 1) * 255),
+            int(min(s["b"], 1) * 255))
+        c = colorchooser.askcolor(initialcolor=init, title="Pick color")
+        if c and c[0]:
+            r, g, b = c[0]
+            s["r"], s["g"], s["b"] = r / 255.0, g / 255.0, b / 255.0
+            self.var_r.set(round(s["r"], 4))
+            self.var_g.set(round(s["g"], 4))
+            self.var_b.set(round(s["b"], 4))
+            self._update_color_swatch()
+            self._all_views_redraw()
+
+    def _on_cam_change(self):
+        try:
+            self.scene["camera"]["lookfrom"] = [
+                float(self.cam_vars["lf_x"].get()),
+                float(self.cam_vars["lf_y"].get()),
+                float(self.cam_vars["lf_z"].get())]
+            self.scene["camera"]["lookat"] = [
+                float(self.cam_vars["la_x"].get()),
+                float(self.cam_vars["la_y"].get()),
+                float(self.cam_vars["la_z"].get())]
+            self.scene["camera"]["vfov"]     = float(self.cam_vars["vfov"].get())
+            self.scene["camera"]["aperture"] = float(self.cam_vars["aperture"].get())
+            self.scene["camera"]["focus"]    = float(self.cam_vars["focus"].get())
+            self.scene["sky"] = self.var_sky.get()
+        except (ValueError, tk.TclError):
+            return
+        self._all_views_redraw()
+
+    # ---------- presets / browse ----------
+    def _apply_preset(self, w, h, spp, depth):
+        self.rend_vars["width"].set(str(w))
+        self.rend_vars["height"].set(str(h))
+        self.rend_vars["spp"].set(str(spp))
+        self.rend_vars["depth"].set(str(depth))
+        self._update_status(f"Preset applied: {w}×{h} · {spp}spp · depth {depth}")
+
+    def _browse_exe(self):
+        p = filedialog.askopenfilename(title="Locate pathtracer executable",
+                                       filetypes=[("Executables", "*.exe"), ("All", "*.*")])
+        if p:
+            self.rend_vars["exe"].set(p)
+
+    # ---------- render ----------
+    def _sync_render_vars_into_scene(self):
+        for key in self.scene["render"]:
+            v = self.rend_vars[key].get().strip()
+            if key in ("width", "height", "spp", "depth", "threads", "seed"):
+                try: self.scene["render"][key] = int(v)
+                except ValueError: pass
+            else:
+                self.scene["render"][key] = v
+
+    def cmd_render(self):
+        self._sync_render_vars_into_scene()
+        r = self.scene["render"]
+        exe = r["exe"]
+        if not os.path.isabs(exe):
+            here = os.path.dirname(os.path.abspath(__file__))
+            cand = os.path.join(here, exe)
+            if os.path.exists(cand):
+                exe = cand
+        if not os.path.exists(exe):
+            messagebox.showerror("Render",
+                f"Pathtracer executable not found:\n  {exe}\n\n"
+                "Set the correct path under 'Pathtracer' in the Render tab.")
+            return
+
+        out_dir = os.path.dirname(os.path.abspath(exe))
+        scene_file = os.path.join(out_dir, "current.scene")
+        try:
+            write_scene_file(self.scene, scene_file)
+        except Exception as e:
+            messagebox.showerror("Render", f"Failed to write scene file:\n{e}")
+            return
+
+        cmd = [exe,
+               "--scene",     "custom",
+               "--scenefile", scene_file,
+               "--width",     str(int(r["width"])),
+               "--height",    str(int(r["height"])),
+               "--spp",       str(int(r["spp"])),
+               "--depth",     str(int(r["depth"])),
+               "--threads",   str(int(r["threads"])),
+               "--output",    r["output"]]
+        seed = int(r["seed"])
+        if seed:
+            cmd += ["--seed", str(seed)]
+
+        self.btn_render.config(state="disabled", text="Rendering…")
+        self.btn_render_big.config(state="disabled", text="Rendering…",
+                                   bg=TH["warn"])
+        self.render_status.config(text="Rendering – this may take a while…",
+                                  fg=TH["warn"])
+        self._update_status("Rendering started…")
+
+        t0 = time.time()
+
+        def worker():
+            try:
+                proc = subprocess.run(cmd, cwd=out_dir,
+                                      capture_output=True, text=True)
+                ok = proc.returncode == 0
+                msg = proc.stdout[-400:] if proc.stdout else ""
+                err = proc.stderr[-400:] if proc.stderr else ""
+            except Exception as e:
+                ok, msg, err = False, "", str(e)
+            dt = time.time() - t0
+
+            def finish():
+                self.btn_render.config(state="normal", text="▶  RENDER  (F12)")
+                self.btn_render_big.config(state="normal", text="▶  RENDER",
+                                           bg=TH["accent"])
+                if ok:
+                    out = os.path.join(out_dir, r["output"])
+                    self.render_status.config(
+                        text=f"Done in {dt:.1f}s — {out}", fg=TH["ok"])
+                    self._update_status(f"Render finished in {dt:.1f}s.")
+                    if messagebox.askyesno("Render finished",
+                            f"Saved {out}\n\nOpen image?"):
+                        self._open_file(out)
+                else:
+                    self.render_status.config(text="Render failed.", fg="#e06c6c")
+                    self._update_status("Render failed.")
+                    messagebox.showerror("Render failed",
+                        f"Command:\n  {' '.join(cmd)}\n\n"
+                        f"stdout:\n{msg}\n\nstderr:\n{err}")
+            self.after(0, finish)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _open_file(self, path):
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.run(["open", path])
+            else:
+                subprocess.run(["xdg-open", path])
+        except Exception:
+            pass
+
+    # ---------- sync helpers ----------
+    def _load_props_into_vars(self):
+        if self.selected_index is None:
+            self.var_name.set(""); self.var_mat.set("lambert")
+            self.var_x.set(0); self.var_y.set(0); self.var_z.set(0)
+            self.var_radius.set(1)
+            self.var_r.set(0.7); self.var_g.set(0.7); self.var_b.set(0.7)
+            self.var_fuzz.set(0); self.var_ir.set(1.5)
+            self._update_color_swatch()
+            return
+        s = self.scene["spheres"][self.selected_index]
+        self.var_name.set(s.get("name", "sphere"))
+        self.var_mat.set(s["material"])
+        self.var_x.set(round(s["x"], 4))
+        self.var_y.set(round(s["y"], 4))
+        self.var_z.set(round(s["z"], 4))
+        self.var_radius.set(round(s["radius"], 4))
+        self.var_r.set(round(s.get("r", 0.7), 4))
+        self.var_g.set(round(s.get("g", 0.7), 4))
+        self.var_b.set(round(s.get("b", 0.7), 4))
+        self.var_fuzz.set(round(s.get("fuzz", 0.0), 4))
+        self.var_ir.set(round(s.get("ir", 1.5), 4))
+        self._update_color_swatch()
+        self._update_info_for_selection()
+
+    def _update_color_swatch(self):
+        try:
+            r = max(0, min(1, float(self.var_r.get())))
+            g = max(0, min(1, float(self.var_g.get())))
+            b = max(0, min(1, float(self.var_b.get())))
+        except tk.TclError:
+            return
+        c = "#{:02x}{:02x}{:02x}".format(int(r*255), int(g*255), int(b*255))
+        if hasattr(self, "color_swatch"):
+            self.color_swatch.config(bg=c)
+
+    def _load_camera_into_vars(self):
+        cam = self.scene["camera"]
+        self.cam_vars["lf_x"].set(round(cam["lookfrom"][0], 4))
+        self.cam_vars["lf_y"].set(round(cam["lookfrom"][1], 4))
+        self.cam_vars["lf_z"].set(round(cam["lookfrom"][2], 4))
+        self.cam_vars["la_x"].set(round(cam["lookat"][0], 4))
+        self.cam_vars["la_y"].set(round(cam["lookat"][1], 4))
+        self.cam_vars["la_z"].set(round(cam["lookat"][2], 4))
+        self.cam_vars["vfov"].set(cam["vfov"])
+        self.cam_vars["aperture"].set(cam["aperture"])
+        self.cam_vars["focus"].set(cam["focus"])
+        self.var_sky.set(self.scene.get("sky", "blue"))
+
+    def _refresh_outliner(self):
+        self.outliner.delete(0, tk.END)
+        for i, s in enumerate(self.scene["spheres"]):
+            icon = MAT_ICON.get(s["material"], "?")
+            tag = "ground" if s["radius"] > 50 else s["material"]
+            line = f" {icon}  {s.get('name','sphere'):<16}  [{tag[:4]}]"
+            self.outliner.insert(tk.END, line)
+        self._refresh_outliner_selection()
+        self._colorize_outliner()
+
+    def _colorize_outliner(self):
+        for i, s in enumerate(self.scene["spheres"]):
+            mat = s["material"]
+            col = {"lambert": "#c4c4c4", "metal": "#e0c87a",
+                   "dielectric": "#9dd1ff", "light": "#ffcf66"}.get(mat, "#fff")
+            try:
+                self.outliner.itemconfig(i, fg=col)
+            except tk.TclError:
+                pass
+
+    def _refresh_outliner_only_labels(self):
+        # update text in place for performance (avoids selection flicker)
+        for i, s in enumerate(self.scene["spheres"]):
+            icon = MAT_ICON.get(s["material"], "?")
+            tag = "ground" if s["radius"] > 50 else s["material"]
+            line = f" {icon}  {s.get('name','sphere'):<16}  [{tag[:4]}]"
+            try:
+                self.outliner.delete(i)
+                self.outliner.insert(i, line)
+            except tk.TclError:
+                pass
+        self._refresh_outliner_selection()
+        self._colorize_outliner()
+
+    def _refresh_outliner_selection(self):
+        self.outliner.selection_clear(0, tk.END)
+        if self.selected_index is not None:
+            self.outliner.selection_set(self.selected_index)
+            self.outliner.see(self.selected_index)
+
+    def _all_views_redraw(self):
+        for vp in getattr(self, "viewports", []):
+            vp.request_redraw()
+
+    def _refresh_all(self):
+        self._refresh_outliner()
+        self._load_props_into_vars()
+        self._load_camera_into_vars()
+        self._all_views_redraw()
+
+    # ---------- about / help ----------
+    def _show_shortcuts(self):
+        msg = (
+            "Viewport navigation:\n"
+            "  MMB drag       → Orbit\n"
+            "  Shift+MMB drag → Pan\n"
+            "  Mouse Wheel    → Zoom\n"
+            "  Double-click   → Frame object\n\n"
+            "Views:\n"
+            "  Numpad 1   → Front\n"
+            "  Numpad 3   → Right\n"
+            "  Numpad 7   → Top\n"
+            "  Numpad 5   → Toggle Ortho/Persp\n"
+            "  Numpad .   → Frame selected\n"
+            "  Home       → Frame all\n\n"
+            "Edit:\n"
+            "  A          → Add menu\n"
+            "  X / Del    → Delete\n"
+            "  Shift+D    → Duplicate\n\n"
+            "File:\n"
+            "  Ctrl+N/O/S → New / Open / Save\n"
+            "  F12        → Render"
+        )
+        messagebox.showinfo("Shortcuts", msg)
+
+    def _show_about(self):
+        messagebox.showinfo("About",
+            "PathTracer++ Scene Editor — 3D\n\n"
+            "A Blender-inspired 3D scene editor for the PathTracer++ renderer.\n"
+            "Pure Python + Tkinter — no third-party dependencies.\n\n"
+            "Backwards-compatible with the .scene text format and the "
+            "patched pathtracer.exe that supports --scene custom --scenefile.")
+
+
+if __name__ == "__main__":
+    SceneEditor().mainloop()

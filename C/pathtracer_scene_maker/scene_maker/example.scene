@@ -1,0 +1,36 @@
+# Example custom scene file for PathTracer++
+# Format reference:
+#   sky <blue|studio|black|sunset>
+#   camera lookfrom <x> <y> <z>
+#   camera lookat   <x> <y> <z>
+#   camera vup      <x> <y> <z>
+#   camera vfov     <deg>
+#   camera aperture <a>
+#   camera focus    <dist>     (0 = auto)
+#   sphere lambert    <x> <y> <z> <r> <cr> <cg> <cb>
+#   sphere metal      <x> <y> <z> <r> <cr> <cg> <cb> <fuzz>
+#   sphere dielectric <x> <y> <z> <r> <ir>
+#   sphere light      <x> <y> <z> <r> <er> <eg> <eb>
+
+sky blue
+camera lookfrom 6.7 2.6 6.8
+camera lookat   0.0 1.0 0.2
+camera vup      0.0 1.0 0.0
+camera vfov     32.0
+camera aperture 0.04
+camera focus    0.0
+
+# ground
+sphere lambert     0.0 -1000.0 0.0  1000.0  0.55 0.58 0.62
+# red diffuse
+sphere lambert     0.0  1.1    0.0  1.1     0.75 0.30 0.25
+# glass (hollow trick: add a second sphere with negative radius at same center)
+sphere dielectric -2.3  1.0    0.2  1.0     1.5
+sphere dielectric -2.3  1.0    0.2 -0.82    1.5
+# gold metal
+sphere metal       2.4  1.0   -0.1  1.0     0.88 0.72 0.28 0.03
+# small accents
+sphere lambert     0.6  0.35   1.9  0.35    0.10 0.20 0.85
+sphere metal      -0.95 0.35   1.7  0.35    0.20 0.85 0.45 0.16
+# area light
+sphere light       3.8  5.0    2.2  1.45    8.0 7.6 6.8
