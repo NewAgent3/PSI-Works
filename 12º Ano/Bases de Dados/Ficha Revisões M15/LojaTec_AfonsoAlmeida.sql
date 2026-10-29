@@ -91,7 +91,7 @@ ALTER TABLE Produto
 MODIFY Categoria VARCHAR(50) NULL;
 
 ALTER TABLE Produto
-RENAME COLUMN Categoria TO Tipo_Produto;
+CHANGE Categoria Tipo_Produto VARCHAR(50);
 
 ALTER TABLE Produto
 DROP COLUMN Tipo_Produto;
@@ -124,7 +124,7 @@ CREATE TABLE Transportadora (
 
 ALTER TABLE Encomenda
 ADD Cod_Transportadora INT NULL,
-CONSTRAINT fk_CodTrans_Encomenda
+ADD CONSTRAINT fk_CodTrans_Encomenda
 FOREIGN KEY (Cod_Transportadora)
 REFERENCES Transportadora(Cod_Transportadora);
 
