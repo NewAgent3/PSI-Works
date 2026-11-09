@@ -1,0 +1,6 @@
+"nc";"nome";"categ";"sede"
+11001;"John Steel";30;"Londres"
+15051;"Giovanni Acero";10;"Roma"
+18231;"Autocomp";20;"Londres"
+21012;"Juan Aco";10;"Madrid"
+23456;"Jean Acier";30;"Paris"

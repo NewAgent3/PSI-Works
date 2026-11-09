@@ -1,0 +1,8 @@
+"serie";"design";"cor";"peso";"origem"
+1;"Biela";"Cinza";600;"Londres"
+2;"Cambota";"Preto";1100;"Paris"
+3;"Biela";"Verde";500;"Londres"
+4;"Volante";"Rosa";1000;"Paris"
+5;"Volante";"Rosa";1100;"Roma"
+6;"Farolim";"Azul";200;"Milão"
+7;"Vidro";"Branco";2000;"Paris"
