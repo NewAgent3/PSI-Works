@@ -45,6 +45,7 @@ WHERE administracao.cid = clientes.cid AND administracao.fid = 3; -- H
 SELECT clientes.nome, clientes.apelido
 FROM administracao, clientes
 WHERE administracao.cid = clientes.cid AND clientes.nome LIKE "%a%" AND administracao.sid = "It"; -- I
+-- A "stora" queria pelos nomes, ou seja, pedi-se no exercício, não especificou, não faço assim
 
 SELECT DISTINCT clientes.nome, clientes.apelido
 FROM administracao, clientes
