@@ -1,0 +1,8 @@
+1.1
+Mostrar o ano e turma de todas as turmas do 10º ano, ordenando por ordem decrescente pelo número de aluno.
+
+1.2
+Mostrar o número do professor e contar as turmas existentes, agrupado pelo número do professor.
+
+1.3
+Selecionar a turma e o nome do professor, que a turma seja do 10º ano, ordenado primeiro pela turma, e depois pelo nome.
